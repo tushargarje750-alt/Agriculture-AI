@@ -1,0 +1,11 @@
+0 1.Rice Leaf Blast (Magnoporthe grisea)
+1 2.Tomato Late Blight (Phytophthora infestans)
+2 3.Banana Bunchy Top Virus (BBTV)
+3 4.wheat brown rust
+4 5.wheat yellow rust
+5 6.Potato Early Blight (Alternaria solani)
+6 7.Tomato Yellow Leaf Curl Virus (ToLCNDV)
+7 8.Citrus Canker (Xanthomonas axonopodis pv. citr)
+8 9.Corn/Maize Common Rust (Puccinia sorghi)
+9 10.Sugarcane Red Rot (Colletotrichum falcatum)
+10 11.Cucumber/Muskmelon Downy Mildew (Pseudoperon)

@@ -1,0 +1,28 @@
+{
+  "architecture": "MobileNetV2 (Transfer Learning, ImageNet weights)",
+  "task": "Multi-class Plant Disease Classification",
+  "num_classes": 11,
+  "classes": [
+    "Rice Leaf Blast (Magnaporthe grisea)",
+    "Tomato Late Blight (Phytophthora infestans)",
+    "Banana Bunchy Top Virus (BBTV)",
+    "Wheat Brown Rust",
+    "Wheat Yellow Rust",
+    "Potato Early Blight (Alternaria solani)",
+    "Tomato Yellow Leaf Curl Virus (ToLCNDV)",
+    "Citrus Canker (Xanthomonas axonopodis)",
+    "Corn/Maize Common Rust (Puccinia sorghi)",
+    "Sugarcane Red Rot (Colletotrichum falcatum)",
+    "Cucumber/Muskmelon Downy Mildew"
+  ],
+  "input_shape": [
+    224,
+    224,
+    3
+  ],
+  "output_activation": "softmax",
+  "total_parameters": 539408,
+  "trainable_parameters": 525328,
+  "total_layers": 2,
+  "note": "Model trained on a custom agricultural disease dataset. Run train_model.py with a labelled dataset to regenerate with full accuracy metrics."
+}

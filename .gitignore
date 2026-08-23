@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment variables (NEVER commit these)
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+build/
+
+# ML model (large binary — host separately or use Git LFS)
+backend/keras_model.h5
+
+# Python cache
+*.egg-info/
+.pytest_cache/
+
+# Editor
+.DS_Store
+.vscode/
+*.suo
+*.sw?
