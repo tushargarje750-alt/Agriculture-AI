@@ -1,0 +1,7 @@
+# Keep LF line endings in the repository and in checkouts on every OS,
+# so a Windows checkout does not show every file as modified on macOS/Linux.
+* text=auto eol=lf
+
+*.h5 binary
+*.png binary
+*.jpg binary

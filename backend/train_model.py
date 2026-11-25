@@ -2,9 +2,8 @@
 Plant Disease Detection — Model Training Pipeline
 ==================================================
 Architecture : MobileNetV2 (Transfer Learning, ImageNet weights)
-Task         : Multi-class image classification (11 plant disease categories)
-Dataset      : Custom agricultural disease dataset
-               Expected layout:
+Task         : Multi-class image classification
+Dataset      : Your own labelled photos, one folder per class:
                  dataset/
                    train/
                      Rice_Leaf_Blast/        *.jpg
@@ -13,12 +12,19 @@ Dataset      : Custom agricultural disease dataset
                    val/
                      Rice_Leaf_Blast/        *.jpg
                      ...
+               Folder names become the class labels (underscores -> spaces).
+               Use field photos, not only plain-background lab photos, or the
+               model will not work on real farm images.
 Training     : Two-phase — (1) train classifier head, (2) fine-tune top layers
 Outputs      : keras_model.h5, training_curves.png, confusion_matrix.png, model_metrics.json
 
+The shipped keras_model.h5 was NOT produced by this script (it is a Teachable
+Machine export). Running this script replaces it with a model you trained and
+records measured accuracy in model_metrics.json.
+
 Usage:
     python train_model.py
-    python train_model.py --epochs 50 --batch_size 64 --data_dir my_dataset
+    python train_model.py --epochs 10 --finetune_epochs 15 --batch_size 64 --data_dir my_dataset
 """
 
 import argparse
@@ -36,29 +42,15 @@ from sklearn.metrics import classification_report, confusion_matrix
 import tensorflow as tf
 import tf_keras as keras
 from tf_keras.applications import MobileNetV2
-from tf_keras.layers import Dense, Dropout, GlobalAveragePooling2D
+from tf_keras.applications.mobilenet_v2 import preprocess_input
+from tf_keras.layers import Dense, Dropout, GlobalAveragePooling2D, Input
 from tf_keras.models import Model
 from tf_keras.preprocessing.image import ImageDataGenerator
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 IMG_SIZE = (224, 224)
-NUM_CLASSES = 11
-FLOW_RATE_LPM = 12.5
-
-CLASS_NAMES = [
-    "Rice Leaf Blast (Magnaporthe grisea)",
-    "Tomato Late Blight (Phytophthora infestans)",
-    "Banana Bunchy Top Virus (BBTV)",
-    "Wheat Brown Rust",
-    "Wheat Yellow Rust",
-    "Potato Early Blight (Alternaria solani)",
-    "Tomato Yellow Leaf Curl Virus (ToLCNDV)",
-    "Citrus Canker (Xanthomonas axonopodis)",
-    "Corn/Maize Common Rust (Puccinia sorghi)",
-    "Sugarcane Red Rot (Colletotrichum falcatum)",
-    "Cucumber/Muskmelon Downy Mildew",
-]
+FINE_TUNE_LAYERS = 30  # top layers of the base unfrozen in phase 2
 
 
 # ── Data Pipeline ──────────────────────────────────────────────────────────────
@@ -73,8 +65,10 @@ def build_generators(data_dir: str, batch_size: int):
     This improves generalisation across different lighting conditions and
     leaf orientations typical in field photography.
     """
+    # preprocess_input scales pixels to [-1, 1], the range MobileNetV2's
+    # ImageNet weights were trained on. app.py uses the same scaling.
     train_aug = ImageDataGenerator(
-        rescale=1.0 / 255,
+        preprocessing_function=preprocess_input,
         rotation_range=30,
         width_shift_range=0.2,
         height_shift_range=0.2,
@@ -84,7 +78,7 @@ def build_generators(data_dir: str, batch_size: int):
         brightness_range=[0.8, 1.2],
         fill_mode="nearest",
     )
-    val_aug = ImageDataGenerator(rescale=1.0 / 255)
+    val_aug = ImageDataGenerator(preprocessing_function=preprocess_input)
 
     train_gen = train_aug.flow_from_directory(
         os.path.join(data_dir, "train"),
@@ -106,17 +100,20 @@ def build_generators(data_dir: str, batch_size: int):
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 
-def build_model(learning_rate: float) -> Model:
+def build_model(learning_rate: float, num_classes: int) -> tuple[Model, Model]:
     """
-    MobileNetV2 with a custom classification head.
+    MobileNetV2 with a custom classification head. Returns (model, base).
 
     MobileNetV2 was chosen because:
       - Pre-trained on ImageNet (1.4M images) — strong feature extractor
-      - Lightweight (3.4M params) — deployable on edge devices
+      - Lightweight (about 2.3M parameters without the top) — deployable on edge devices
       - Depthwise-separable convolutions — fast inference on Raspberry Pi / Jetson
 
     Head architecture:
-      GlobalAveragePooling → Dense(256, ReLU) → Dropout(0.4) → Dense(11, Softmax)
+      GlobalAveragePooling → Dense(256, ReLU) → Dropout(0.4) → Dense(num_classes, Softmax)
+
+    The base is called with training=False so its BatchNorm layers stay in
+    inference mode during fine-tuning, as the Keras transfer-learning guide advises.
     """
     base = MobileNetV2(
         input_shape=(*IMG_SIZE, 3),
@@ -125,18 +122,26 @@ def build_model(learning_rate: float) -> Model:
     )
     base.trainable = False  # freeze during phase 1
 
-    x = GlobalAveragePooling2D()(base.output)
+    inputs = Input(shape=(*IMG_SIZE, 3))
+    x = base(inputs, training=False)
+    x = GlobalAveragePooling2D()(x)
     x = Dense(256, activation="relu")(x)
     x = Dropout(0.4)(x)
-    out = Dense(NUM_CLASSES, activation="softmax")(x)
+    out = Dense(num_classes, activation="softmax")(x)
 
-    model = Model(inputs=base.input, outputs=out)
+    model = Model(inputs=inputs, outputs=out)
     model.compile(
         optimizer=keras.optimizers.Adam(learning_rate),
         loss="categorical_crossentropy",
         metrics=["accuracy"],
     )
-    return model
+    return model, base
+
+
+def class_names(gen) -> list[str]:
+    """Class labels in the model's output order (flow_from_directory sorts folders)."""
+    by_index = sorted(gen.class_indices.items(), key=lambda kv: kv[1])
+    return [folder.replace("_", " ") for folder, _ in by_index]
 
 
 # ── Training ──────────────────────────────────────────────────────────────────
@@ -165,19 +170,23 @@ def get_callbacks(output_path: str):
     ]
 
 
-def train(args) -> tuple[Model, dict]:
+def train(args) -> tuple[Model, dict, object, list[str]]:
     """
     Two-phase transfer learning:
 
-    Phase 1 — classifier warmup (5–10 epochs, base frozen)
+    Phase 1 — classifier warmup (--epochs, default 10, base frozen)
         Only the new head learns. This prevents the pretrained weights
         from being corrupted by large initial gradients.
 
-    Phase 2 — fine-tuning (up to 15 epochs, top 30 base layers unfrozen)
+    Phase 2 — fine-tuning (--finetune_epochs, default 15, top 30 base layers unfrozen)
         Low LR (÷10) so pretrained features are refined rather than destroyed.
     """
     train_gen, val_gen = build_generators(args.data_dir, args.batch_size)
-    model = build_model(args.lr)
+    if train_gen.class_indices != val_gen.class_indices:
+        sys.exit("[ERROR] train/ and val/ must contain the same class folders.")
+    names = class_names(train_gen)
+
+    model, base = build_model(args.lr, len(names))
     model.summary()
     callbacks = get_callbacks(args.output)
 
@@ -190,10 +199,9 @@ def train(args) -> tuple[Model, dict]:
         verbose=1,
     )
 
-    print("\n─── Phase 2: Fine-tuning top 30 base layers ───")
-    base = model.layers[0]
+    print(f"\n─── Phase 2: Fine-tuning top {FINE_TUNE_LAYERS} base layers ───")
     base.trainable = True
-    for layer in base.layers[:-30]:
+    for layer in base.layers[:-FINE_TUNE_LAYERS]:
         layer.trainable = False
 
     model.compile(
@@ -204,7 +212,7 @@ def train(args) -> tuple[Model, dict]:
     h2 = model.fit(
         train_gen,
         validation_data=val_gen,
-        epochs=15,
+        epochs=args.finetune_epochs,
         callbacks=callbacks,
         verbose=1,
     )
@@ -214,12 +222,14 @@ def train(args) -> tuple[Model, dict]:
     for key in ("accuracy", "val_accuracy", "loss", "val_loss"):
         history[key] = h1.history.get(key, []) + h2.history.get(key, [])
 
-    return model, history, val_gen
+    # Evaluate the checkpoint that was actually saved (best val_accuracy).
+    best = keras.models.load_model(args.output)
+    return best, history, val_gen, names
 
 
 # ── Evaluation & Plots ────────────────────────────────────────────────────────
 
-def evaluate(model: Model, val_gen, history: dict):
+def evaluate(model: Model, val_gen, history: dict, names: list[str]):
     """Generate classification report, confusion matrix, and training curves."""
 
     val_gen.reset()
@@ -227,7 +237,8 @@ def evaluate(model: Model, val_gen, history: dict):
     y_true = val_gen.classes
 
     report = classification_report(
-        y_true, y_pred, target_names=CLASS_NAMES, output_dict=True, zero_division=0
+        y_true, y_pred, labels=list(range(len(names))), target_names=names,
+        output_dict=True, zero_division=0,
     )
     cm = confusion_matrix(y_true, y_pred)
 
@@ -257,7 +268,7 @@ def evaluate(model: Model, val_gen, history: dict):
     print("Saved: training_curves.png")
 
     # ── Confusion matrix ───────────────────────────────────────────────────────
-    short_names = [c.split("(")[0].strip() for c in CLASS_NAMES]
+    short_names = [c.split("(")[0].strip() for c in names]
     plt.figure(figsize=(13, 10))
     sns.heatmap(
         cm,
@@ -278,19 +289,21 @@ def evaluate(model: Model, val_gen, history: dict):
 
     # ── Metrics JSON ───────────────────────────────────────────────────────────
     metrics = {
-        "architecture": "MobileNetV2 (Transfer Learning, ImageNet)",
+        "source": "train_model.py (MobileNetV2 transfer learning, ImageNet weights)",
+        "architecture": "MobileNetV2 + GlobalAveragePooling + Dense(256) + Dropout(0.4) + Dense(softmax)",
         "task": "Multi-class Plant Disease Classification",
-        "num_classes": NUM_CLASSES,
-        "classes": CLASS_NAMES,
+        "num_classes": len(names),
+        "classes": names,
         "input_shape": [224, 224, 3],
-        "overall": {
+        "input_scaling": "[-1, 1] (pixel / 127.5 - 1)",
+        "evaluation": {
+            "dataset": "validation split (val/ folder)",
+            "num_images": int(len(y_true)),
             "accuracy": round(report["accuracy"], 4),
             "macro_precision": round(report["macro avg"]["precision"], 4),
             "macro_recall": round(report["macro avg"]["recall"], 4),
             "macro_f1": round(report["macro avg"]["f1-score"], 4),
         },
-        "final_val_accuracy": round(history["val_accuracy"][-1], 4),
-        "final_val_loss": round(history["val_loss"][-1], 4),
         "epochs_trained": len(history["accuracy"]),
         "per_class": {
             cls: {
@@ -299,19 +312,23 @@ def evaluate(model: Model, val_gen, history: dict):
                 "f1_score": round(report[cls]["f1-score"], 4),
                 "support": int(report[cls]["support"]),
             }
-            for cls in CLASS_NAMES
+            for cls in names
             if cls in report
         },
+        "note": (
+            "Measured on the validation folder only. Accuracy on real field photos "
+            "will be lower if the training photos were taken in a lab or on plain backgrounds."
+        ),
     }
 
-    with open("model_metrics.json", "w") as f:
-        json.dump(metrics, f, indent=2)
+    with open("model_metrics.json", "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
     print("Saved: model_metrics.json")
 
+    ev = metrics["evaluation"]
     print(f"\n{'─'*50}")
-    print(f"  Val Accuracy  : {metrics['final_val_accuracy']:.4f}")
-    print(f"  Val Loss      : {metrics['final_val_loss']:.4f}")
-    print(f"  Macro F1      : {metrics['overall']['macro_f1']:.4f}")
+    print(f"  Val Accuracy  : {ev['accuracy']:.4f}  ({ev['num_images']} images)")
+    print(f"  Macro F1      : {ev['macro_f1']:.4f}")
     print(f"{'─'*50}\n")
 
     return metrics
@@ -322,7 +339,8 @@ def evaluate(model: Model, val_gen, history: dict):
 def parse_args():
     p = argparse.ArgumentParser(description="Train plant disease detection model")
     p.add_argument("--data_dir", default="dataset", help="Root directory with train/val folders")
-    p.add_argument("--epochs", type=int, default=30)
+    p.add_argument("--epochs", type=int, default=10, help="Phase 1 (head only) epochs")
+    p.add_argument("--finetune_epochs", type=int, default=15, help="Phase 2 (fine-tuning) epochs")
     p.add_argument("--batch_size", type=int, default=32)
     p.add_argument("--lr", type=float, default=1e-4)
     p.add_argument("--output", default="keras_model.h5")
@@ -340,6 +358,6 @@ if __name__ == "__main__":
         print("  dataset/val/<ClassName>/*.jpg")
         sys.exit(1)
 
-    model, history, val_gen = train(args)
-    evaluate(model, val_gen, history)
+    model, history, val_gen, names = train(args)
+    evaluate(model, val_gen, history, names)
     print(f"Model saved to: {args.output}")

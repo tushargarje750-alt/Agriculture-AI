@@ -1,6 +1,10 @@
-  ## Running the code
+# AgriIrrigation frontend
 
-  Run `npm i` to install the dependencies.
+React + Vite web app. Setup, environment variables and the full project description
+are in the [main README](../README.md).
 
-  Run `npm run dev` to start the development server.
-  
+```bash
+npm install
+cp .env.example .env   # then fill in your Firebase config
+npm run dev            # http://localhost:5173
+```

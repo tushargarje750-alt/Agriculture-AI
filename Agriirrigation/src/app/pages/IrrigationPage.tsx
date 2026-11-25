@@ -1,8 +1,17 @@
-import { Droplet, Play, Square, Zap, TrendingUp, Timer, Activity, Gauge, AlertTriangle } from "lucide-react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { Droplet, Play, Square, Zap, Timer, Activity, Gauge, AlertTriangle, CloudRain, Leaf } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { useState, useEffect, useRef } from "react";
+import { Link } from "react-router";
 
-const BACKEND = "http://localhost:5000";
+/*firebase*/
+import { database } from "../../firebase/firebase";
+import { ref, onValue, set } from "firebase/database";
+
+import { postJson } from "../lib/api";
+import { useFarmWeather } from "../lib/useFarmWeather";
+
+const DEVICE = "devices/ESP32_001";
+const FLOW_RATE_LPM = 12.5; // matches FLOW_RATE_LPM in backend/irrigation_engine.py
 
 interface IrrigationRec {
   should_irrigate: boolean;
@@ -12,31 +21,13 @@ interface IrrigationRec {
   estimated_water_liters: number;
   reasons: string[];
   warnings: string[];
-  confidence: number;
+  inputs_used: string[];
 }
 
-/*firebase*/
-import { database } from "../../firebase/firebase";
-import { ref, onValue, set } from "firebase/database";
-
-const waterUsageData = [
-  { day: "Mon", usage: 23 },
-  { day: "Tue", usage: 26 },
-  { day: "Wed", usage: 19 },
-  { day: "Thu", usage: 14 },
-  { day: "Fri", usage: 18 },
-  { day: "Sat", usage: 22 },
-  { day: "Sun", usage: 10 },
-];
-
-const moistureTrendData = [
-  { time: "6AM", moisture: 45 },
-  { time: "9AM", moisture: 42 },
-  { time: "12PM", moisture: 38 },
-  { time: "3PM", moisture: 35 },
-  { time: "6PM", moisture: 40 },
-  { time: "9PM", moisture: 43 },
-];
+interface TrendPoint {
+  time: string;
+  moisture: number;
+}
 
 export function IrrigationPage() {
   const [irrigationStatus, setIrrigationStatus] = useState<"idle" | "running" | "auto">("idle");
@@ -48,19 +39,22 @@ export function IrrigationPage() {
     humidity: 0,
     pump: false,
   });
+  const [hasReading, setHasReading] = useState(false);
+  const [moistureTrend, setMoistureTrend] = useState<TrendPoint[]>([]);
   const [recommendation, setRecommendation] = useState<IrrigationRec | null>(null);
   const [recLoading, setRecLoading] = useState(false);
-  const lastFetchSoil = useRef<number>(-1);
+  const [recError, setRecError] = useState<string | null>(null);
+  const lastRequestKey = useRef("");
 
-  // Simulate running irrigation
+  const weather = useFarmWeather();
+  const forecast = weather.status === "ready" ? weather.forecast : null;
+
+  // Run timer while the pump is on (flow is the pump's rated flow, not a measurement)
   useEffect(() => {
-    let interval: any;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (irrigationStatus === "running") {
-      interval = setInterval(() => {
-        setDuration((prev) => prev + 1);
-        setWaterFlow(12.5); // liters per minute
-        
-      }, 1000);
+      setWaterFlow(FLOW_RATE_LPM);
+      interval = setInterval(() => setDuration((prev) => prev + 1), 1000);
     } else {
       setDuration(0);
       setWaterFlow(0);
@@ -68,55 +62,72 @@ export function IrrigationPage() {
     return () => clearInterval(interval);
   }, [irrigationStatus]);
 
-useEffect(() => {
-  const dataRef = ref(database, "devices/ESP32_001/data");
+  // Live sensor readings from the ESP32 via Firebase Realtime Database
+  useEffect(() => {
+    const dataRef = ref(database, `${DEVICE}/data`);
 
-  const unsubscribe = onValue(dataRef, (snapshot) => {
-    const data = snapshot.val();
-    if (!data) return;
+    const unsubscribe = onValue(dataRef, (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
 
-    setSensorData({
-      soil: data.soil || 0,
-      temp: data.temp || 25,
-      humidity: data.humidity || 60,
-      pump: data.pump || false,
+      const reading = {
+        soil: Number(data.soil ?? 0),
+        temp: Number(data.temp ?? 25),
+        humidity: Number(data.humidity ?? 60),
+        pump: Boolean(data.pump),
+      };
+      setSensorData(reading);
+      setHasReading(true);
+      setMoistureTrend((prev) => [
+        ...prev.slice(-19),
+        { time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }), moisture: reading.soil },
+      ]);
+
+      if (data.autoMode) setIrrigationStatus("auto");
+      else if (data.pump) setIrrigationStatus("running");
+      else setIrrigationStatus("idle");
     });
 
-    if (data.autoMode) setIrrigationStatus("auto");
-    else if (data.pump) setIrrigationStatus("running");
-    else setIrrigationStatus("idle");
-  });
+    return () => unsubscribe();
+  }, []);
 
-  return () => unsubscribe();
-}, []);
+  // Ask the engine again when soil moisture moves by 2% or a new forecast arrives
+  useEffect(() => {
+    if (!hasReading) return;
+    const key = `${Math.round(sensorData.soil / 2)}|${forecast?.fetchedAt ?? "none"}`;
+    if (key === lastRequestKey.current) return;
+    lastRequestKey.current = key;
 
-// Fetch smart recommendation whenever soil moisture changes by ≥ 2%
-useEffect(() => {
-  if (Math.abs(sensorData.soil - lastFetchSoil.current) < 2) return;
-  lastFetchSoil.current = sensorData.soil;
-
-  const fetchRec = async () => {
-    setRecLoading(true);
-    try {
-      const res = await fetch(`${BACKEND}/irrigation/recommend`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+    const fetchRec = async () => {
+      setRecLoading(true);
+      try {
+        const rec = await postJson<IrrigationRec>("/irrigation/recommend", {
           soil: sensorData.soil,
           temp: sensorData.temp,
           humidity: sensorData.humidity,
-        }),
-      });
-      if (res.ok) setRecommendation(await res.json());
-    } catch {
-      // backend unreachable — keep previous recommendation
-    } finally {
-      setRecLoading(false);
-    }
-  };
+          hour: new Date().getHours(),
+          ...(forecast && {
+            et0_mm: forecast.et0TodayMm,
+            rain_mm_24h: forecast.rainNext24hMm,
+          }),
+        });
+        setRecommendation(rec);
+        setRecError(null);
+      } catch (e) {
+        setRecError(e instanceof Error ? e.message : "Backend not reachable");
+        lastRequestKey.current = ""; // retry on the next reading
+      } finally {
+        setRecLoading(false);
+      }
+    };
 
-  fetchRec();
-}, [sensorData.soil, sensorData.temp, sensorData.humidity]);
+    fetchRec();
+  }, [hasReading, sensorData.soil, sensorData.temp, sensorData.humidity, forecast]);
+
+  const sendCommand = (irrigation: "ON" | "OFF" | "NONE", autoMode: boolean) => {
+    set(ref(database, `${DEVICE}/commands/irrigation`), irrigation);
+    set(ref(database, `${DEVICE}/commands/autoMode`), autoMode);
+  };
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -143,9 +154,9 @@ useEffect(() => {
           <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 shadow-lg text-white">
             <div className="flex items-center justify-between mb-2">
               <Droplet className="w-8 h-8" />
-              <span className="text-sm opacity-80">Live</span>
+              <span className="text-sm opacity-80">{hasReading ? "Live" : "Waiting for sensor"}</span>
             </div>
-            <div className="text-3xl font-bold mb-1">{sensorData.soil}%</div>
+            <div className="text-3xl font-bold mb-1">{hasReading ? `${sensorData.soil}%` : "—"}</div>
             <p className="text-sm opacity-90">Soil Moisture</p>
             <div className="mt-3 w-full bg-white/20 rounded-full h-2">
               <div
@@ -163,10 +174,10 @@ useEffect(() => {
           }`}>
             <div className="flex items-center justify-between mb-2">
               <Activity className="w-8 h-8" />
-              <span className="text-sm opacity-80">Flow Rate</span>
+              <span className="text-sm opacity-80">Rated flow</span>
             </div>
             <div className="text-3xl font-bold mb-1">{waterFlow.toFixed(1)} L/m</div>
-            <p className="text-sm opacity-90">Current Flow</p>
+            <p className="text-sm opacity-90">Pump flow rate</p>
             {irrigationStatus === "running" && (
               <div className="mt-3 flex items-center space-x-1">
                 <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
@@ -190,10 +201,10 @@ useEffect(() => {
           <div className="bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-xl p-6 shadow-lg text-white">
             <div className="flex items-center justify-between mb-2">
               <Gauge className="w-8 h-8" />
-              <span className="text-sm opacity-80">Total Usage</span>
+              <span className="text-sm opacity-80">Estimated</span>
             </div>
             <div className="text-3xl font-bold mb-1">{(waterFlow * duration / 60).toFixed(0)}L</div>
-            <p className="text-sm opacity-90">Water Used</p>
+            <p className="text-sm opacity-90">Water used this run</p>
           </div>
         </div>
 
@@ -210,13 +221,8 @@ useEffect(() => {
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-3 mb-2">
-                <h3 className="text-xl font-semibold">Smart Irrigation Recommendation</h3>
+                <h3 className="text-xl font-semibold">Irrigation Recommendation</h3>
                 {recLoading && <span className="text-sm opacity-70 animate-pulse">Analysing…</span>}
-                {recommendation && (
-                  <span className="text-sm bg-white/20 px-2 py-0.5 rounded-full">
-                    {Math.round(recommendation.confidence * 100)}% confidence
-                  </span>
-                )}
               </div>
 
               {recommendation ? (
@@ -259,13 +265,21 @@ useEffect(() => {
                       Water: ~{recommendation.estimated_water_liters}L
                     </span>
                   </div>
+                  <p className="mt-3 text-xs opacity-80">
+                    Based on: {recommendation.inputs_used.join(", ")}
+                  </p>
                 </>
               ) : (
                 <p className="opacity-80">
                   {recLoading
-                    ? "Fetching smart recommendation from AI engine…"
-                    : `Soil: ${sensorData.soil}% — connect sensors or wait for first reading to generate recommendation.`}
+                    ? "Getting a recommendation…"
+                    : recError
+                    ? `Could not reach the backend: ${recError}`
+                    : "Waiting for the first sensor reading from the field."}
                 </p>
+              )}
+              {recommendation && recError && (
+                <p className="mt-2 text-xs opacity-80">Last update failed: {recError}</p>
               )}
             </div>
           </div>
@@ -276,28 +290,62 @@ useEffect(() => {
           <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-8 text-center">
             Irrigation Control Panel
           </h3>
-          
+
           <div className="grid md:grid-cols-3 gap-6 mb-8">
             {/* Start Button */}
             <button
-              onClick={() => {
-  set(ref(database, "devices/ESP32_001/commands/irrigation"), "ON");
-  set(ref(database, "devices/ESP32_001/commands/autoMode"), false);
-}}
+              onClick={() => sendCommand("ON", false)}
               disabled={irrigationStatus === "running"}
               className={`group relative p-8 rounded-2xl border-3 transition-all duration-300 transform hover:scale-105 ${
                 irrigationStatus === "running"
+                  ? "border-green-500 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/30 dark:to-green-900/20 shadow-xl shadow-green-500/20"
+                  : "border-gray-300 dark:border-gray-600 hover:border-green-500 hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+              }`}
+            >
+              <div className={`w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center transition-all ${
+                irrigationStatus === "running"
+                  ? "bg-green-500 animate-pulse"
+                  : "bg-green-100 dark:bg-green-900/30 group-hover:bg-green-500 group-hover:scale-110"
+              }`}>
+                <Play className={`w-9 h-9 transition-colors ${
+                  irrigationStatus === "running"
+                    ? "text-white"
+                    : "text-green-600 dark:text-green-400 group-hover:text-white"
+                }`} />
+              </div>
+              <div className="text-center">
+                <p className="text-lg font-bold text-gray-900 dark:text-white mb-1">
+                  Start Irrigation
+                </p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Manual control</p>
+              </div>
+              {irrigationStatus === "running" && (
+                <div className="absolute top-3 right-3">
+                  <span className="flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                  </span>
+                </div>
+              )}
+            </button>
+
+            {/* Stop Button */}
+            <button
+              onClick={() => sendCommand("OFF", false)}
+              disabled={irrigationStatus === "idle"}
+              className={`group relative p-8 rounded-2xl border-3 transition-all duration-300 transform hover:scale-105 ${
+                irrigationStatus === "idle"
                   ? "border-red-500 bg-gradient-to-br from-red-50 to-red-100 dark:from-red-900/30 dark:to-red-900/20 shadow-xl shadow-red-500/20"
                   : "border-gray-300 dark:border-gray-600 hover:border-red-500 hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
               }`}
             >
               <div className={`w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center transition-all ${
-                irrigationStatus === "running"
-                  ? "bg-red-500 animate-pulse"
-                  : "bg-red-100 dark:bg-green-900/30 group-hover:bg-red-500 group-hover:scale-110"
+                irrigationStatus === "idle"
+                  ? "bg-red-500"
+                  : "bg-red-100 dark:bg-red-900/30 group-hover:bg-red-500 group-hover:scale-110"
               }`}>
-                <Play className={`w-9 h-9 transition-colors ${
-                  irrigationStatus === "running"
+                <Square className={`w-9 h-9 transition-colors ${
+                  irrigationStatus === "idle"
                     ? "text-white"
                     : "text-red-600 dark:text-red-400 group-hover:text-white"
                 }`} />
@@ -306,53 +354,13 @@ useEffect(() => {
                 <p className="text-lg font-bold text-gray-900 dark:text-white mb-1">
                   Stop Irrigation
                 </p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Manual control</p>
-              </div>
-              {irrigationStatus === "running" && (
-                <div className="absolute top-3 right-3">
-                  <span className="flex h-3 w-3">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-                  </span>
-                </div>
-              )}
-            </button>
-
-            {/* Stop Button */}
-            <button
-              onClick={() => {
-  set(ref(database, "devices/ESP32_001/commands/irrigation"), "OFF");
-  set(ref(database, "devices/ESP32_001/commands/autoMode"), false);
-}}
-              disabled={irrigationStatus === "idle"}
-              className={`group relative p-8 rounded-2xl border-3 transition-all duration-300 transform hover:scale-105 ${
-                irrigationStatus === "idle"
-                  ? "border-green-500 bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/30 dark:to-red-900/20 shadow-xl shadow-green-500/20"
-                  : "border-gray-300 dark:border-gray-600 hover:border-green-500 hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-              }`}
-            >
-              <div className={`w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center transition-all ${
-                irrigationStatus === "idle"
-                  ? "bg-green-500"
-                  : "bg-green-100 dark:bg-green-900/30 group-hover:bg-green-500 group-hover:scale-110"
-              }`}>
-                <Square className={`w-9 h-9 transition-colors ${
-                  irrigationStatus === "idle"
-                    ? "text-white"
-                    : "text-green-600 dark:text-red-400 group-hover:text-white"
-                }`} />
-              </div>
-              <div className="text-center">
-                <p className="text-lg font-bold text-gray-900 dark:text-white mb-1">
-                  Start Irrigation
-                </p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Emergency start</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Turn the pump off</p>
               </div>
             </button>
 
             {/* Auto Mode Button */}
             <button
-              onClick={() => {   set(ref(database, "devices/ESP32_001/commands/autoMode"), true);   set(ref(database, "devices/ESP32_001/commands/irrigation"), "NONE"); }}
+              onClick={() => sendCommand("NONE", true)}
               className={`group relative p-8 rounded-2xl border-3 transition-all duration-300 transform hover:scale-105 ${
                 irrigationStatus === "auto"
                   ? "border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-900/20 shadow-xl shadow-blue-500/20"
@@ -374,7 +382,7 @@ useEffect(() => {
                 <p className="text-lg font-bold text-gray-900 dark:text-white mb-1">
                   Auto Mode
                 </p>
-                <p className="text-sm text-gray-600 dark:text-gray-400">AI controlled</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Let the ESP32 control the pump</p>
               </div>
               {irrigationStatus === "auto" && (
                 <div className="absolute top-3 right-3">
@@ -427,63 +435,86 @@ useEffect(() => {
 
         {/* Charts */}
         <div className="grid lg:grid-cols-2 gap-6">
-          {/* Water Usage Graph */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Water Usage (Liters)
-              </h3>
-              <TrendingUp className="w-5 h-5 text-gray-400" />
-            </div>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={waterUsageData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="day" stroke="#9CA3AF" />
-                <YAxis stroke="#9CA3AF" />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#1F2937",
-                    border: "none",
-                    borderRadius: "8px",
-                    color: "#fff",
-                  }}
-                />
-                <Bar key="water-usage" dataKey="usage" fill="#3B82F6" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
           {/* Moisture Trend */}
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                Today's Moisture Trend
+                Moisture Trend (since this page opened)
               </h3>
               <Droplet className="w-5 h-5 text-blue-500" />
             </div>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={moistureTrendData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="time" stroke="#9CA3AF" />
-                <YAxis stroke="#9CA3AF" />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "#1F2937",
-                    border: "none",
-                    borderRadius: "8px",
-                    color: "#fff",
-                  }}
-                />
-                <Line
-                  key="moisture"
-                  type="monotone"
-                  dataKey="moisture"
-                  stroke="#3B82F6"
-                  strokeWidth={3}
-                  dot={{ fill: "#3B82F6", r: 4 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            {moistureTrend.length < 2 ? (
+              <p className="text-sm text-gray-500 py-24 text-center">
+                The trend appears after a few sensor readings.
+              </p>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={moistureTrend}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                  <XAxis dataKey="time" stroke="#9CA3AF" />
+                  <YAxis stroke="#9CA3AF" domain={[0, 100]} unit="%" />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "#1F2937",
+                      border: "none",
+                      borderRadius: "8px",
+                      color: "#fff",
+                    }}
+                  />
+                  <Line
+                    key="moisture"
+                    type="monotone"
+                    dataKey="moisture"
+                    name="Soil moisture (%)"
+                    stroke="#3B82F6"
+                    strokeWidth={3}
+                    dot={{ fill: "#3B82F6", r: 4 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+
+          {/* Forecast used by the engine */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+              Weather Used for the Recommendation
+            </h3>
+            {forecast && weather.place ? (
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  {weather.place.name}{weather.place.region ? `, ${weather.place.region}` : ""} · Open-Meteo forecast
+                </p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-xl bg-green-50 dark:bg-green-900/20 p-4">
+                    <Leaf className="w-6 h-6 text-green-600 mb-2" />
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {forecast.et0TodayMm.toFixed(1)} mm
+                    </p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Crop water demand today (ET₀)</p>
+                  </div>
+                  <div className="rounded-xl bg-blue-50 dark:bg-blue-900/20 p-4">
+                    <CloudRain className="w-6 h-6 text-blue-600 mb-2" />
+                    <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                      {forecast.rainNext24hMm} mm
+                    </p>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">Rain expected, next 24 h</p>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500">
+                  ET₀ is the FAO-56 reference evapotranspiration: how much water a well-watered
+                  grass crop would lose today. Rain of 5 mm or more lets the engine skip a light irrigation.
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {weather.status === "loading"
+                  ? "Loading the forecast…"
+                  : weather.status === "error"
+                  ? `Forecast unavailable (${weather.error}). The recommendation uses sensor data only.`
+                  : <>Add your farm location in <Link to="/farm-settings" className="text-green-600 font-medium">Farm Settings</Link> to include rain and evapotranspiration in the recommendation.</>}
+              </p>
+            )}
           </div>
         </div>
       </div>

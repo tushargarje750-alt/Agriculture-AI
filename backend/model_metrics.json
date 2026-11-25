@@ -1,5 +1,6 @@
 {
-  "architecture": "MobileNetV2 (Transfer Learning, ImageNet weights)",
+  "source": "Google Teachable Machine (image project, Keras export)",
+  "architecture": "MobileNetV2 feature extractor (width 0.35, ImageNet weights) + Dense(100) + Dense(softmax), the standard Teachable Machine export",
   "task": "Multi-class Plant Disease Classification",
   "num_classes": 11,
   "classes": [
@@ -20,9 +21,8 @@
     224,
     3
   ],
-  "output_activation": "softmax",
+  "input_scaling": "[-1, 1] (pixel / 127.5 - 1), centre-cropped to a square",
   "total_parameters": 539408,
-  "trainable_parameters": 525328,
-  "total_layers": 2,
-  "note": "Model trained on a custom agricultural disease dataset. Run train_model.py with a labelled dataset to regenerate with full accuracy metrics."
+  "evaluation": null,
+  "note": "No held-out accuracy has been recorded for this model yet. Measure it with `python evaluate_model.py --data_dir <labelled photos>` or retrain with train_model.py, which records accuracy, macro F1 and per-class scores."
 }

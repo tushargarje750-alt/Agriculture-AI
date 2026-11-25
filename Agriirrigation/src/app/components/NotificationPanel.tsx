@@ -88,6 +88,9 @@ export function NotificationPanel({ isOpen, onClose }: NotificationPanelProps) {
           <div className="flex items-center space-x-2">
             <Bell className="w-5 h-5" />
             <h3 className="font-semibold text-lg">Notifications</h3>
+            <span className="px-2 py-0.5 bg-yellow-300 text-yellow-900 rounded-full text-xs font-medium">
+              Sample
+            </span>
             {notifications.length > 0 && (
               <span className="px-2 py-1 bg-white/20 rounded-full text-xs">
                 {notifications.length}

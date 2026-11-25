@@ -1,6 +1,20 @@
-import { Bot, Send, Upload, Camera, AlertCircle, CheckCircle } from "lucide-react";
+import { Bot, Send, Upload, Camera, AlertCircle, AlertTriangle } from "lucide-react";
 import { useState } from "react";
-import { ImageWithFallback } from "../components/figma/ImageWithFallback";
+import { postForm, postJson } from "../lib/api";
+
+interface DiseaseResult {
+  disease: string;
+  confidence: number;
+  uncertain: boolean;
+  top: { disease: string; confidence: number }[];
+  info: {
+    pathogen_type: string | null;
+    cause: string | null;
+    management: string[];
+    advice_note: string;
+  };
+  note: string;
+}
 
 const suggestedQuestions = [
   "What's the best time to irrigate today?",
@@ -14,7 +28,9 @@ const suggestedQuestions = [
 export function AIAssistantPage() {
   const [message, setMessage] = useState("");
   const [diseaseImage, setDiseaseImage] = useState<string | null>(null);
-  const [diseaseResult, setDiseaseResult] = useState<any>(null);
+  const [diseaseResult, setDiseaseResult] = useState<DiseaseResult | null>(null);
+  const [diseaseError, setDiseaseError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
   const [chatHistory, setChatHistory] = useState([
   {
@@ -25,90 +41,57 @@ export function AIAssistantPage() {
 ]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!message.trim()) return;
+    e.preventDefault();
+    if (!message.trim() || sending) return;
 
-  const userInput = message;
-
-  const userMsg = {
-    type: "user",
-    message: userInput,
-    time: new Date().toLocaleTimeString(),
-  };
-
-  setChatHistory((prev) => [...prev, userMsg]);
-  setMessage("");
-
-  try {
-    const res = await fetch("http://127.0.0.1:5000/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ message: userInput }),
-    });
-
-    const data = await res.json();
-
-    const botMsg = {
-      type: "bot",
-      message: data.reply,
-      time: new Date().toLocaleTimeString(),
-    };
-
-    setChatHistory((prev) => [...prev, botMsg]);
-  } catch (error) {
+    const userInput = message.trim();
     setChatHistory((prev) => [
       ...prev,
-      {
-        type: "bot",
-        message: "Server error bro 😅",
-        time: new Date().toLocaleTimeString(),
-      },
+      { type: "user", message: userInput, time: new Date().toLocaleTimeString() },
     ]);
-  }
-};
+    setMessage("");
+    setSending(true);
+
+    try {
+      const data = await postJson<{ reply: string }>("/chat", { message: userInput });
+      setChatHistory((prev) => [
+        ...prev,
+        { type: "bot", message: data.reply, time: new Date().toLocaleTimeString() },
+      ]);
+    } catch (error) {
+      setChatHistory((prev) => [
+        ...prev,
+        {
+          type: "bot",
+          message: `Sorry, I couldn't answer: ${error instanceof Error ? error.message : "server not reachable"}`,
+          time: new Date().toLocaleTimeString(),
+        },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow choosing the same file again
+    if (!file) return;
 
-  // preview image
-  const reader = new FileReader();
-  reader.onload = () => {
-    setDiseaseImage(reader.result as string);
-  };
-  reader.readAsDataURL(file);
+    // preview image
+    const reader = new FileReader();
+    reader.onload = () => setDiseaseImage(reader.result as string);
+    reader.readAsDataURL(file);
 
-  // send to backend
-  const formData = new FormData();
-  formData.append("image", file);
+    const formData = new FormData();
+    formData.append("image", file);
 
-  try {
     setDiseaseResult(null);
-    const res = await fetch("http://127.0.0.1:5000/predict", {
-      method: "POST",
-      body: formData,
-    });
-
-    const data = await res.json();
-
-    setDiseaseResult({
-      disease: data.disease,
-      confidence: Number(data.confidence).toFixed(2),
-      cause: "Virus detected in plant",
-      treatment:
-        "1. Remove infected leaves\n2. Use proper pesticide\n3. Maintain hygiene\n4. Monitor irrigation",
-    });
-  } catch (error) {
-    console.error("Error:", error);
-    setDiseaseResult({
-  disease: "Error",
-  confidence: "0",
-  cause: "Backend connection failed",
-  treatment: "Check server or network",
-  });
-  }
+    setDiseaseError(null);
+    try {
+      setDiseaseResult(await postForm<DiseaseResult>("/predict", formData));
+    } catch (error) {
+      setDiseaseError(error instanceof Error ? error.message : "Backend not reachable");
+    }
   };
 
   return (
@@ -197,7 +180,8 @@ export function AIAssistantPage() {
                 />
                 <button
                   type="submit"
-                  className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-xl transition-colors"
+                  disabled={sending}
+                  className="px-6 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-xl transition-colors"
                 >
                   <Send className="w-5 h-5" />
                 </button>
@@ -259,6 +243,7 @@ export function AIAssistantPage() {
             e.stopPropagation(); // 🔥 VERY IMPORTANT
             setDiseaseImage(null);
             setDiseaseResult(null);
+            setDiseaseError(null);
           }}
           className="text-sm text-green-600 hover:underline"
         >
@@ -286,6 +271,12 @@ export function AIAssistantPage() {
             </button>
 
             {/* Detection Result */}
+            {diseaseError && (
+              <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-6 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300">
+                Could not analyse the photo: {diseaseError}
+              </div>
+            )}
+
             {diseaseResult && (
               <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-6 border border-red-200 dark:border-red-800">
                 <div className="flex items-center justify-between mb-4">
@@ -297,38 +288,59 @@ export function AIAssistantPage() {
                   </span>
                 </div>
 
+                {diseaseResult.uncertain && (
+                  <div className="mb-4 flex items-start gap-2 rounded-lg bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 p-3 text-sm text-yellow-900 dark:text-yellow-200">
+                    <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span>
+                      Low confidence: this may be a healthy leaf, another disease or another crop.
+                      Take a closer, well-lit photo of one affected leaf, or ask an expert.
+                    </span>
+                  </div>
+                )}
+
                 <div className="space-y-4">
                   <div>
                     <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">
-                      Disease Name
+                      Most likely
                     </p>
                     <p className="text-lg font-semibold text-gray-900 dark:text-white">
                       {diseaseResult.disease}
                     </p>
+                    {diseaseResult.top.length > 1 && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Next: {diseaseResult.top.slice(1).map((t) => `${t.disease} (${t.confidence}%)`).join(", ")}
+                      </p>
+                    )}
                   </div>
 
-                  <div>
-                    <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">
-                      Cause
-                    </p>
-                    <p className="text-gray-700 dark:text-gray-300">{diseaseResult.cause}</p>
-                  </div>
-
-                  <div>
-                    <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">
-                      Treatment Suggestions
-                    </p>
-                    <div className="bg-white dark:bg-gray-800 rounded-lg p-4">
-                      <pre className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-sans">
-                        {diseaseResult.treatment}
-                      </pre>
+                  {diseaseResult.info.cause && (
+                    <div>
+                      <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-1">
+                        Cause{diseaseResult.info.pathogen_type ? ` · ${diseaseResult.info.pathogen_type}` : ""}
+                      </p>
+                      <p className="text-gray-700 dark:text-gray-300">{diseaseResult.info.cause}</p>
                     </div>
-                  </div>
+                  )}
+
+                  {diseaseResult.info.management.length > 0 && (
+                    <div>
+                      <p className="text-sm font-medium text-gray-600 dark:text-gray-400 mb-2">
+                        What to do
+                      </p>
+                      <ul className="bg-white dark:bg-gray-800 rounded-lg p-4 space-y-1 text-sm text-gray-700 dark:text-gray-300 list-disc list-inside">
+                        {diseaseResult.info.management.map((step) => (
+                          <li key={step}>{step}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <p className="text-xs text-gray-500">{diseaseResult.info.advice_note}</p>
                 </div>
               </div>
             )}
 
-            {!diseaseResult && diseaseImage && (
+            {!diseaseResult && !diseaseError && diseaseImage && (
               <div className="text-center py-8">
                 <div className="animate-spin w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full mx-auto mb-4"></div>
                 <p className="text-gray-600 dark:text-gray-400">Analyzing image...</p>

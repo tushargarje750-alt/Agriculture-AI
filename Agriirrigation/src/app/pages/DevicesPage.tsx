@@ -49,6 +49,12 @@ export function DevicesPage() {
           </button>
         </div>
 
+        <div className="mb-8 rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-900 dark:border-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
+          <strong>Sample data:</strong> the device list, status and battery values on this page are
+          examples. Device registration is not connected yet; live sensor data comes from the
+          controller <code>ESP32_001</code> on the Dashboard and Irrigation pages.
+        </div>
+
         {/* Stats Cards */}
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 shadow-sm">

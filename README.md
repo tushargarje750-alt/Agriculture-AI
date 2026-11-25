@@ -1,397 +1,302 @@
 # AgriIrrigation — Smart Farming & Irrigation Platform
 
-A full-stack **AI-powered smart agriculture web application** that helps farmers monitor crops, schedule irrigation intelligently, detect plant diseases using machine learning, and get expert advice via an AI chatbot — all in one platform.
+A web app that connects a low-cost **ESP32 field controller** to a dashboard, so a farmer can
+see live soil and weather conditions, get an **explainable irrigation recommendation**, switch
+the pump on or off, check a **leaf photo for common crop diseases**, and ask a **farming
+chatbot** in Hinglish.
+
+It is a student project, built and tested with one field controller. It has not been run on
+working farms, so it makes no claims about water saved or yield gained.
 
 ---
 
-## Table of Contents
+## Contents
 
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Backend Setup](#backend-setup)
-  - [Frontend Setup](#frontend-setup)
-- [Environment Variables](#environment-variables)
-- [API Endpoints](#api-endpoints)
-- [Pages & Routes](#pages--routes)
-- [AI & ML Features](#ai--ml-features)
-- [IoT Integration](#iot-integration)
-- [Screenshots](#screenshots)
-
----
-
-## Features
-
-- **Smart Dashboard** — Real-time sensor data (soil moisture, temperature, humidity, gas levels) with live charts
-- **Irrigation Scheduling** — Rule-based AI engine recommends when and how long to irrigate based on soil moisture, temperature, humidity, and time of day
-- **Plant Disease Detection** — Upload a crop leaf image → MobileNetV2 ML model classifies the disease (11 classes) with confidence score
-- **IoT Anomaly Detection** — Statistical Z-score analysis flags faulty or unexpected sensor readings automatically
-- **AI Chatbot (Hinglish)** — Gemini 2.5 Flash-powered agricultural assistant answers farmer questions in simple Hinglish
-- **Weather Page** — Real-time weather data relevant to farming decisions
-- **Marketplace** — Browse and list farm produce
-- **Device Management** — Register and manage IoT sensor devices (ESP32)
-- **Firebase Auth** — Secure login/signup with email & password via Firebase Authentication
-- **Farm Setup & Settings** — Configure farm profile, crop types, zone settings
-- **Notification Panel** — Real-time alerts for critical sensor readings
-- **Responsive UI** — Mobile-first design with floating mobile navigation
+- [What works today](#what-works-today)
+- [How it works](#how-it-works)
+  - [Irrigation recommendation](#irrigation-recommendation)
+  - [Sensor anomaly detection](#sensor-anomaly-detection)
+  - [Plant disease detection](#plant-disease-detection)
+  - [Chatbot](#chatbot)
+- [Tech stack](#tech-stack)
+- [Project structure](#project-structure)
+- [Getting started](#getting-started)
+- [Environment variables](#environment-variables)
+- [API](#api)
+- [Firebase data layout (ESP32)](#firebase-data-layout-esp32)
+- [Tests](#tests)
+- [Known limitations](#known-limitations)
+- [License](#license)
 
 ---
 
-## Tech Stack
+## What works today
 
-### Frontend
-| Technology | Version | Purpose |
-|---|---|---|
-| React | 18.3.1 | UI framework |
-| TypeScript | — | Type safety |
-| Vite | 6.4.1 | Build tool & dev server |
-| React Router | 7.13.0 | Client-side routing |
-| Tailwind CSS | 4.1.12 | Utility-first styling |
-| shadcn/ui + Radix UI | — | Accessible UI components |
-| MUI (Material UI) | 7.3.5 | Additional UI components |
-| Recharts | 2.15.2 | Sensor data charts |
-| Firebase SDK | 12.11.0 | Auth + Realtime Database + Firestore |
-| Lucide React | 0.487.0 | Icon library |
-| Motion | 12.23.24 | Animations |
-
-### Backend
-| Technology | Version | Purpose |
-|---|---|---|
-| Python 3 | — | Runtime |
-| Flask | — | Web framework |
-| TF-Keras (MobileNetV2) | — | Plant disease classification model |
-| Google Gemini 2.5 Flash | — | AI chatbot |
-| Firebase Admin SDK | — | JWT token verification |
-| Flask-CORS | — | Cross-origin requests |
-| Pillow | — | Image preprocessing |
-| NumPy | — | Numerical operations |
-
-### Cloud & Infrastructure
-| Service | Purpose |
+| Feature | Status |
 |---|---|
-| Firebase Authentication | User login/signup |
-| Firebase Realtime Database | Live IoT sensor data from ESP32 |
-| Firebase Firestore | User profiles and farm data |
-| Google Gemini API | AI chatbot responses |
+| Live soil moisture, temperature, humidity and gas readings from the ESP32 (Firebase Realtime Database) | Working |
+| Manual pump start/stop and hand-over to the ESP32's auto mode | Working |
+| Irrigation recommendation from soil moisture + Open-Meteo rain forecast and ET₀ | Working |
+| Sensor health check (range check + rolling Z-score) on the dashboard | Working |
+| 7-day weather forecast for the farm's location (Open-Meteo, no API key) | Working |
+| Leaf-photo disease classifier (11 diseases) with cause and general advice | Working, **accuracy not yet measured** (see below) |
+| Hinglish farming chatbot (Gemini 2.5 Flash) | Working (needs your own Gemini API key) |
+| Login, profile and farm settings (Firebase Auth + Firestore) | Working |
+| Optional ESP32-CAM live view on the dashboard | Working on the same Wi-Fi network |
+| Marketplace | Static reference content: suggested products and usage steps per disease, in 7 languages |
+| Devices page and notifications panel | **Sample data**, labelled as such in the app |
 
 ---
 
-## Project Structure
+## How it works
+
+```
+ESP32 sensors ──► Firebase Realtime DB ──► React app ──► Flask API ──► irrigation engine
+     ▲                                        │   │                    anomaly detector
+     └──────────── pump commands ◄────────────┘   │                    disease model (Keras)
+                                                  └──► Open-Meteo      Gemini chatbot
+                                                       (forecast, ET₀)
+```
+
+### Irrigation recommendation
+
+`backend/irrigation_engine.py` is a rule-based engine. Every recommendation lists the reasons
+behind it and the inputs it used, so the farmer can see *why*.
+
+| Input | Rule |
+|---|---|
+| Soil moisture (sensor) | ≤ 20 % critical, irrigate now · ≤ 35 % dry, within 1–2 h · ≤ 45 % mild deficit, within 3 h · ≥ 80 % wet, skip 24 h |
+| ET₀, today's reference evapotranspiration (Open-Meteo, FAO-56 Penman-Monteith) | ≥ 6 mm/day: soil dries fast, a mild deficit becomes urgent · ≤ 3 mm/day: a mild deficit can wait 3 more hours |
+| Rain forecast, next 24 h (Open-Meteo) | ≥ 5 mm: skip irrigation for a mild deficit, run a shorter cycle when dry, still irrigate when critical |
+| Air temperature (sensor) | > 38 °C: move irrigation out of the 11 AM–4 PM evaporation window |
+| Humidity (sensor) | > 85 %: delay 2 h (only when ET₀ is not available, since ET₀ already accounts for humidity) |
+| Time of day (farm's local hour) | Prefer 5–9 AM; defer to evening when it is midday |
+
+Run time is estimated from the moisture deficit below the 70 % refill target
+(`MINUTES_PER_PCT_DEFICIT`) and the pump's flow rate (12.5 L/min). The thresholds are starting
+values: calibrate them for your soil, crop and sensor.
+
+### Sensor anomaly detection
+
+`backend/anomaly_detector.py` checks each new reading in two ways:
+
+1. **Range check**: physically impossible values (e.g. soil moisture > 100 %) are flagged *high*.
+2. **Rolling Z-score** against the last 30 readings: Z > 2.5 is *medium*, Z > 4 is *high*.
+   A minimum spread per sensor (e.g. 1 % for soil moisture) stops a sensor that has sent the
+   same value for a while from flagging a 1-unit change.
+
+The dashboard's **Sensor Health** card shows the result for every reading.
+
+### Plant disease detection
+
+- **Model**: a [Google Teachable Machine](https://teachablemachine.withgoogle.com/) image model
+  exported to Keras: MobileNetV2 feature extractor (width 0.35, ImageNet weights) + Dense(100) +
+  Dense(11, softmax), about 540 k parameters.
+- **Input**: the photo is centre-cropped, resized to 224 × 224 and scaled to [-1, 1].
+- **Output**: the top-3 classes with confidence, plus the cause (pathogen and how it spreads)
+  and general management steps from `backend/disease_info.py`. No pesticide names or doses are
+  given; the app points the farmer to the local agriculture officer / KVK for that.
+- **Classes**: Rice leaf blast, Tomato late blight, Banana bunchy top virus, Wheat brown rust,
+  Wheat yellow rust, Potato early blight, Tomato leaf curl virus, Citrus canker, Maize common
+  rust, Sugarcane red rot, Cucumber/muskmelon downy mildew.
+
+**Accuracy has not been measured yet.** `backend/model_metrics.json` says so and is served at
+`/model/info`. Two ways to get real numbers:
+
+```bash
+cd backend
+# Measure the current model on labelled photos it has never seen
+# (one folder per class, named with the class number first, e.g. test_set/00_rice_blast/)
+python evaluate_model.py --data_dir test_set
+
+# Or train your own MobileNetV2 model (two-phase transfer learning) on dataset/train and dataset/val;
+# this replaces keras_model.h5 and records accuracy, macro F1, per-class scores,
+# training curves and a confusion matrix
+pip install -r requirements-train.txt
+python train_model.py --data_dir dataset
+```
+
+Limitations to keep in mind: the model has **no "healthy" class**, so every photo gets one of
+the 11 labels. The app marks results below 60 % confidence as uncertain and says so.
+
+### Chatbot
+
+`POST /chat` sends the question to Gemini 2.5 Flash (via the `google-genai` SDK) with a system
+prompt that asks for short, practical answers in simple Hinglish and tells the farmer to confirm
+pesticide or fertiliser doses with a local expert.
+
+---
+
+## Tech stack
+
+**Frontend**: React 18, TypeScript, Vite 6, React Router 7, Tailwind CSS 4, shadcn/ui + Radix UI,
+Recharts, Firebase JS SDK (Auth, Firestore, Realtime Database), Open-Meteo (weather).
+
+**Backend**: Python 3.12, Flask 3, TensorFlow 2.21 / tf-keras, Pillow, NumPy, google-genai
+(Gemini), Firebase Admin SDK (token verification).
+
+**Hardware**: ESP32 with a soil moisture sensor, DHT22 (temperature + humidity) and an MQ gas
+sensor; optional ESP32-CAM.
+
+---
+
+## Project structure
 
 ```
 Agri_Irrigation/
-├── .gitignore
-├── README.md
-│
-├── Agriirrigation/                    # React + TypeScript Frontend
-│   ├── .env                           # Firebase credentials (not committed)
-│   ├── .env.example                   # Template for env variables
-│   ├── package.json
-│   ├── vite.config.ts
-│   ├── postcss.config.mjs
-│   ├── index.html
+├── Agriirrigation/                 React + TypeScript frontend
+│   ├── .env.example                Firebase config + backend URL
 │   └── src/
-│       ├── main.tsx                   # React DOM entry point
-│       ├── firebase/                  # Firebase SDK initialization
-│       ├── app/
-│       │   ├── App.tsx                # RouterProvider entry
-│       │   ├── routes.tsx             # All route definitions
-│       │   ├── components/
-│       │   │   ├── Navigation.tsx     # Main sidebar/navbar
-│       │   │   ├── MobileNavFloating.tsx
-│       │   │   ├── NotificationPanel.tsx
-│       │   │   └── ui/               # shadcn/ui component library
-│       │   ├── context/              # React context (auth, etc.)
-│       │   ├── layouts/              # Page layout wrappers
-│       │   └── pages/
-│       │       ├── LandingPage.tsx
-│       │       ├── LoginPage.tsx
-│       │       ├── SignUpPage.tsx
-│       │       ├── DashboardPage.tsx
-│       │       ├── IrrigationPage.tsx
-│       │       ├── AIAssistantPage.tsx
-│       │       ├── DevicesPage.tsx
-│       │       ├── WeatherPage.tsx
-│       │       ├── marketplace.tsx
-│       │       ├── FarmSetupPage.tsx
-│       │       ├── FarmSettingsPage.tsx
-│       │       ├── ProfilePage.tsx
-│       │       ├── EditProfilePage.tsx
-│       │       ├── ProfileSetupPage.tsx
-│       │       ├── AboutPage.tsx
-│       │       ├── DocumentationPage.tsx
-│       │       ├── SupportPage.tsx
-│       │       └── NotFoundPage.tsx
+│       ├── firebase/firebase.ts    Firebase initialisation
+│       └── app/
+│           ├── routes.tsx          All routes
+│           ├── lib/
+│           │   ├── api.ts          Backend calls (adds the Firebase login token)
+│           │   ├── weather.ts      Open-Meteo geocoding + forecast
+│           │   └── useFarmWeather.ts  Forecast for the signed-in user's farm
+│           ├── components/         Navigation, notification panel, shadcn/ui components
+│           └── pages/              Dashboard, Irrigation, Weather, AI Assistant, …
 │
-└── backend/                           # Python Flask Backend
-    ├── .env                           # API keys (not committed)
-    ├── .env.example                   # Template for env variables
-    ├── app.py                         # Flask server entry point (port 5000)
-    ├── irrigation_engine.py           # Smart irrigation scheduling logic
-    ├── anomaly_detector.py            # IoT sensor anomaly detection
-    ├── keras_model.h5                 # Trained MobileNetV2 model (plant disease)
-    ├── labels.txt                     # Disease class labels
-    ├── model_metrics.json             # Model evaluation metrics
-    ├── train_model.py                 # Model training script
-    ├── evaluate_model.py              # Model evaluation script
-    └── test_backend.py                # Backend test suite
+└── backend/                        Flask API
+    ├── app.py                      Routes, auth, CORS
+    ├── irrigation_engine.py        Irrigation rules
+    ├── anomaly_detector.py         Range check + rolling Z-score
+    ├── disease_info.py             Cause and management notes per disease
+    ├── model_utils.py              Image preprocessing, class list
+    ├── keras_model.h5              Disease model (Teachable Machine export, 2.3 MB)
+    ├── model_metrics.json          Model details and any measured accuracy
+    ├── evaluate_model.py           Measure the model on labelled photos
+    ├── train_model.py              Train a new MobileNetV2 model
+    ├── test_backend.py             Test suite
+    ├── requirements.txt            Runtime packages
+    └── requirements-train.txt      Extra packages for training
 ```
 
 ---
 
-## Getting Started
+## Getting started
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) v18+
-- [Python](https://python.org/) 3.9+
-- A [Firebase](https://console.firebase.google.com/) project with:
-  - Authentication enabled (Email/Password)
-  - Realtime Database enabled
-  - Firestore enabled
-- A [Google Gemini API key](https://aistudio.google.com/app/apikey)
+- Node.js 18+
+- Python 3.12
+- A [Firebase](https://console.firebase.google.com/) project with Email/Password Authentication,
+  Realtime Database and Firestore enabled
+- Optional: a [Gemini API key](https://aistudio.google.com/app/apikey) for the chatbot
+
+### Backend
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate        # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env            # then fill in API_KEY (and the service account for auth)
+python app.py                   # http://localhost:5000
+```
+
+### Frontend
+
+```bash
+cd Agriirrigation
+npm install
+cp .env.example .env            # then fill in your Firebase config
+npm run dev                     # http://localhost:5173
+```
+
+After signing up, enter your village or town on **Farm Settings** so the Weather and Irrigation
+pages can fetch the forecast.
 
 ---
 
-### Backend Setup
-
-1. Navigate to the backend folder:
-   ```bash
-   cd backend
-   ```
-
-2. Create a virtual environment and activate it:
-   ```bash
-   python -m venv venv
-
-   # Windows
-   venv\Scripts\activate
-
-   # Mac/Linux
-   source venv/bin/activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install flask flask-cors tf-keras google-generativeai Pillow numpy firebase-admin python-dotenv
-   ```
-
-4. Create your `.env` file:
-   ```bash
-   cp .env.example .env
-   ```
-   Fill in your Gemini API key.
-
-5. Start the backend server:
-   ```bash
-   python app.py
-   ```
-   Backend runs on **http://localhost:5000**
-
----
-
-### Frontend Setup
-
-1. Navigate to the frontend folder:
-   ```bash
-   cd Agriirrigation
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Create your `.env` file:
-   ```bash
-   cp .env.example .env
-   ```
-   Fill in your Firebase project credentials.
-
-4. Start the development server:
-   ```bash
-   npm run dev
-   ```
-   Frontend runs on **http://localhost:5173**
-
----
-
-## Environment Variables
+## Environment variables
 
 ### Frontend — `Agriirrigation/.env`
 
-```env
-VITE_API_KEY=your_firebase_api_key
-VITE_AUTH_DOMAIN=your_project.firebaseapp.com
-VITE_PROJECT_ID=your_project_id
-VITE_STORAGE_BUCKET=your_project.firebasestorage.app
-VITE_MESSAGING_SENDER_ID=your_sender_id
-VITE_APP_ID=your_app_id
-VITE_DATABASE_URL=https://your_project-default-rtdb.firebaseio.com/
-```
-
-Get these from: Firebase Console → Project Settings → Your apps → Config
+| Variable | Purpose |
+|---|---|
+| `VITE_API_KEY`, `VITE_AUTH_DOMAIN`, `VITE_PROJECT_ID`, `VITE_STORAGE_BUCKET`, `VITE_MESSAGING_SENDER_ID`, `VITE_APP_ID`, `VITE_DATABASE_URL` | Firebase web config (Firebase console → Project settings → Your apps) |
+| `VITE_API_BASE` | Backend address (default `http://localhost:5000`) |
 
 ### Backend — `backend/.env`
 
-```env
-API_KEY=your_google_gemini_api_key
-GOOGLE_APPLICATION_CREDENTIALS=path/to/firebase-service-account.json
-```
-
-Get your Gemini key from: [Google AI Studio](https://aistudio.google.com/app/apikey)
-
-> **Note:** Never commit `.env` files. They are excluded via `.gitignore`.
-
----
-
-## API Endpoints
-
-### Disease Detection
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| POST | `/predict` | Upload crop image → get disease name + confidence | No |
-
-### AI Chatbot
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| POST | `/chat` | Send a farming question → get Gemini AI response | No |
-
-### Irrigation
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| POST | `/irrigation/recommend` | Get smart irrigation recommendation | Yes (Firebase JWT) |
-
-**Request body:**
-```json
-{
-  "soil": 35,
-  "temp": 32,
-  "humidity": 65,
-  "hour": 8
-}
-```
-
-### Anomaly Detection
-| Method | Endpoint | Description | Auth |
-|---|---|---|---|
-| POST | `/anomaly/detect` | Detect faulty sensor readings | Yes (Firebase JWT) |
-
-**Request body:**
-```json
-{
-  "reading": { "soil": 42, "temp": 28, "humidity": 60, "gas": 120 },
-  "history": [{ "soil": 40, "temp": 27 }, ...]
-}
-```
-
-### Model Info
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/model/info` | Returns ML model architecture and metrics |
-
----
-
-## Pages & Routes
-
-| Route | Page | Description |
-|---|---|---|
-| `/` | Landing Page | Hero section, features overview |
-| `/login` | Login | Firebase email/password login |
-| `/signup` | Sign Up | New user registration |
-| `/profile-setup` | Profile Setup | First-time user onboarding |
-| `/dashboard` | Dashboard | Real-time sensor data & charts |
-| `/irrigation` | Irrigation | Smart irrigation recommendations |
-| `/ai-assistant` | AI Assistant | Gemini chatbot for farming queries |
-| `/devices` | Devices | IoT device management (ESP32) |
-| `/weather` | Weather | Weather data for farm location |
-| `/marketplace` | Marketplace | Buy/sell farm produce |
-| `/farm-setup` | Farm Setup | Configure farm details |
-| `/farm-settings` | Farm Settings | Update farm configuration |
-| `/profile` | Profile | View user profile |
-| `/edit-profile` | Edit Profile | Update profile details |
-| `/about` | About | About the platform |
-| `/docs` | Documentation | Technical documentation |
-| `/support` | Support | Help & support |
-
----
-
-## AI & ML Features
-
-### Plant Disease Detection
-- **Model:** MobileNetV2 (Transfer Learning, ImageNet weights)
-- **Task:** Multi-class classification (11 disease classes)
-- **Input:** Leaf image (resized to 224×224)
-- **Output:** Disease name + confidence score
-
-**Supported diseases:**
-| # | Disease |
+| Variable | Purpose |
 |---|---|
-| 1 | Rice Leaf Blast (*Magnaporthe grisea*) |
-| 2 | Tomato Late Blight (*Phytophthora infestans*) |
-| 3 | Banana Bunchy Top Virus (BBTV) |
-| 4 | Wheat Brown Rust |
-| 5 | Wheat Yellow Rust |
-| 6 | Potato Early Blight (*Alternaria solani*) |
-| 7 | Tomato Yellow Leaf Curl Virus (ToLCNDV) |
-| 8 | Citrus Canker (*Xanthomonas axonopodis*) |
-| 9 | Corn/Maize Common Rust (*Puccinia sorghi*) |
-| 10 | Sugarcane Red Rot (*Colletotrichum falcatum*) |
-| 11 | Cucumber/Muskmelon Downy Mildew |
+| `API_KEY` | Gemini API key; without it `/chat` returns 503 and everything else works |
+| `GEMINI_MODEL` | Optional, default `gemini-2.5-flash` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to a Firebase service-account JSON. When set, every API call must carry the user's Firebase login token |
+| `AUTH_REQUIRED` | `true` makes the server refuse to start without the service account (use when deploying) |
+| `CORS_ORIGINS` | Comma-separated frontend addresses allowed to call the API (default `http://localhost:5173`) |
+| `FLASK_HOST`, `PORT`, `FLASK_DEBUG` | Default `127.0.0.1`, `5000`, `0`. Never expose the debugger on a network: it allows running code on the machine |
 
-### Smart Irrigation Engine
-Rule-based decision system using:
-- **Soil moisture thresholds** — critical (<20%), dry (<35%), watch (<45%), optimal, wet (>80%)
-- **Temperature** — avoids peak heat window (11 AM–4 PM) to reduce evaporation
-- **Humidity** — high humidity delays irrigation
-- **Time of day** — prefers early morning (5–9 AM) for efficiency
-
-Each recommendation includes:
-- `should_irrigate` — yes/no decision
-- `urgency` — none / low / medium / high / critical
-- `delay_hours` — how long to wait
-- `duration_minutes` — how long to run irrigation
-- `estimated_water_liters` — water volume estimate
-- `reasons` + `warnings` — human-readable explanations
-
-### IoT Anomaly Detection
-Two-layer detection:
-1. **Hard range check** — flags physically impossible readings (e.g., soil > 100%)
-2. **Rolling Z-score** — flags statistical outliers (Z > 2.5 = medium, Z > 4 = high severity)
-
-### AI Chatbot
-- Powered by **Gemini 2.5 Flash**
-- Responds in **Hinglish** (Hindi + English mix) for farmer accessibility
-- Expert agricultural advice on crops, pests, irrigation, and soil
+`.env` files are git-ignored. Never commit them or the service-account JSON.
 
 ---
 
-## IoT Integration
+## API
 
-The platform integrates with **ESP32 microcontrollers** that push sensor data directly to Firebase Realtime Database. The frontend reads this live data to display real-time charts and trigger anomaly detection.
+All `POST` endpoints require `Authorization: Bearer <Firebase ID token>` when the backend has a
+service account configured; the frontend sends it automatically.
 
-**Sensors supported:**
-- Soil moisture sensor
-- DHT22 (temperature + humidity)
-- MQ gas sensor
+| Method | Endpoint | Body | Returns |
+|---|---|---|---|
+| GET | `/health` | | What is configured (model, chatbot, auth) |
+| GET | `/model/info` | | Model source, architecture, classes and recorded accuracy |
+| POST | `/predict` | multipart form, field `image` (≤ 10 MB) | `disease`, `confidence`, `uncertain`, `top` (3), `info` (cause, management) |
+| POST | `/chat` | `{ "message": "..." }` (≤ 1000 chars) | `{ "reply": "..." }` |
+| POST | `/irrigation/recommend` | `{ "soil", "temp", "humidity", "hour"?, "et0_mm"?, "rain_mm_24h"? }` | `should_irrigate`, `urgency`, `delay_hours`, `duration_minutes`, `estimated_water_liters`, `reasons`, `warnings`, `inputs_used` |
+| POST | `/anomaly/detect` | `{ "reading": {soil, temp, humidity, gas}, "history": [...] }` | `anomalies_detected`, `anomalies`, `sensor_scores`, `overall_score` |
+
+Example:
+
+```bash
+curl -X POST http://localhost:5000/irrigation/recommend \
+  -H "Content-Type: application/json" \
+  -d '{"soil": 32, "temp": 31, "humidity": 55, "hour": 7, "et0_mm": 6.4, "rain_mm_24h": 0}'
+```
 
 ---
 
-## Screenshots
+## Firebase data layout (ESP32)
 
-> Add screenshots here after running locally.
+The app reads and writes these Realtime Database paths for controller `ESP32_001`:
 
-| Page | Preview |
-|---|---|
-| Dashboard | *(coming soon)* |
-| Irrigation Recommendation | *(coming soon)* |
-| Disease Detection | *(coming soon)* |
-| AI Chatbot | *(coming soon)* |
+```
+devices/ESP32_001/data        ← ESP32 writes: soil, temp, humidity, gas, pump, autoMode
+                                 (optional: battery, N, P, K)
+devices/ESP32_001/commands    ← app writes:   irrigation ("ON" | "OFF" | "NONE"), autoMode (bool)
+```
+
+User profiles and farm settings live in Firestore under `users/{uid}`.
+
+---
+
+## Tests
+
+```bash
+cd backend
+python test_backend.py
+```
+
+48 checks covering the irrigation engine (including rain and ET₀ rules), the anomaly detector
+and every API endpoint through Flask's test client, so no server needs to be running. The live
+chatbot check runs only when `API_KEY` is set.
+
+---
+
+## Known limitations
+
+- **Disease model accuracy is unmeasured** and the model has no "healthy" class (see above).
+- The dashboard's **fertility score** is a rough heuristic from soil moisture, humidity and the
+  MQ gas sensor reading. It is not a measurement of soil nutrients.
+- The **devices list** and **notifications** are sample data; device registration is not
+  connected to Firebase yet.
+- One controller (`ESP32_001`) is hard-coded in the frontend.
+- The irrigation thresholds are generic starting values, not calibrated for a specific soil or crop.
 
 ---
 
 ## License
 
-This project is open source and available under the [MIT License](LICENSE).
+[MIT](LICENSE). UI components from shadcn/ui (MIT), photos from Unsplash, weather data from
+Open-Meteo (CC BY 4.0); see [Agriirrigation/ATTRIBUTIONS.md](Agriirrigation/ATTRIBUTIONS.md).

@@ -1,22 +1,22 @@
-import { Droplet, Thermometer, Wind, Sprout, Battery, Wifi, MapPin } from "lucide-react";
+import { Droplet, Thermometer, Wind, Sprout, Battery, Wifi, ShieldCheck, AlertTriangle } from "lucide-react";
 import {
   LineChart,
   Line,
   AreaChart,
   Area,
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /* Firebase */
 import { database } from "../../firebase/firebase";
 import { ref, onValue } from "firebase/database";
+
+import { postJson } from "../lib/api";
 
 /* ================= TYPES ================= */
 
@@ -25,7 +25,7 @@ interface SensorData {
   humidity: number;
   soil: number;
   light: number;
-  battery: number;
+  battery: number | null; // null when the device does not report it
   gas: number;
   pump: boolean;
   autoMode: boolean;
@@ -41,25 +41,17 @@ interface ChartPoint {
   value: number;
 }
 
-/* ================= STATIC DATA ================= */
+const SENSOR_KEYS = ["soil", "temp", "humidity", "gas"] as const;
+type SensorReading = Partial<Record<(typeof SENSOR_KEYS)[number], number>>;
 
-const solarData = [
-  { time: "6AM", output: 20 },
-  { time: "9AM", output: 60 },
-  { time: "12PM", output: 95 },
-  { time: "3PM", output: 80 },
-  { time: "6PM", output: 30 },
-];
+interface AnomalyReport {
+  anomalies_detected: boolean;
+  anomaly_count: number;
+  overall_score: number;
+  anomalies: { sensor: string; value: number; reason: string; severity: "medium" | "high" }[];
+}
 
-const irrigationActivity = [
-  { day: "Mon", duration: 45 },
-  { day: "Tue", duration: 50 },
-  { day: "Wed", duration: 38 },
-  { day: "Thu", duration: 42 },
-  { day: "Fri", duration: 55 },
-  { day: "Sat", duration: 48 },
-  { day: "Sun", duration: 40 },
-];
+const HISTORY_SIZE = 30; // readings kept for the anomaly detector's rolling statistics
 
 export function DashboardPage() {
   const [espIP, setEspIP] = useState("");
@@ -73,7 +65,7 @@ export function DashboardPage() {
   humidity: 0,
   soil: 0,
   light: 0,
-  battery: 67,   // ✅ FIXED
+  battery: null,
   gas: 0,
   pump: false,
   autoMode: false,
@@ -90,8 +82,12 @@ export function DashboardPage() {
     useState<ChartPoint[]>([]);
 
 
-  const [showNPK, setShowNPK] = useState(false);      // ✅ HERE
-  const [npkHistory, setNpkHistory] = useState<any[]>([]);  // ✅ HERE
+  const [showNPK, setShowNPK] = useState(false);
+  const [npkHistory, setNpkHistory] = useState<any[]>([]);
+
+  const readingHistory = useRef<SensorReading[]>([]);
+  const [anomalyReport, setAnomalyReport] = useState<AnomalyReport | null>(null);
+  const [anomalyError, setAnomalyError] = useState<string | null>(null);
 
   // ✅ FERTILITY LOGIC
   const calculateFertility = (
@@ -130,11 +126,28 @@ export function DashboardPage() {
         data.humidity
       );
 
-      setSensorData({ 
-  ...data,
-  battery: 67,   // ✅ FORCE FIX
-  fertility,
-});
+      setSensorData({
+        ...data,
+        battery: typeof data.battery === "number" ? data.battery : null,
+        fertility,
+      });
+
+      // Check the new reading against recent history for faulty sensor values
+      const reading: SensorReading = {};
+      for (const key of SENSOR_KEYS) {
+        const value = (data as Record<string, unknown>)[key];
+        if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
+          reading[key] = Number(value);
+        }
+      }
+      const history = readingHistory.current;
+      postJson<AnomalyReport>("/anomaly/detect", { reading, history })
+        .then((report) => {
+          setAnomalyReport(report);
+          setAnomalyError(null);
+        })
+        .catch((e) => setAnomalyError(e instanceof Error ? e.message : "Backend not reachable"));
+      readingHistory.current = [...history, reading].slice(-HISTORY_SIZE);
 
       const time = new Date().toLocaleTimeString();
 
@@ -214,8 +227,9 @@ const handleConnect = () => {
     {
       icon: Battery,
       label: "Battery",
-      value: `${sensorData.battery}%`,
-      status: sensorData.battery > 20 ? "OK" : "Low",
+      value: sensorData.battery === null ? "—" : `${sensorData.battery}%`,
+      status:
+        sensorData.battery === null ? "Not reported by device" : sensorData.battery > 20 ? "OK" : "Low",
       color: "text-yellow-600 dark:text-yellow-400",
       bg: "bg-yellow-100 dark:bg-yellow-900/30",
     },
@@ -326,15 +340,40 @@ const handleConnect = () => {
 </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6">
-            <h3 className="mb-4 font-semibold">Irrigation Activity</h3>
-            <ResponsiveContainer width="100%" height={250}>
-              <BarChart data={irrigationActivity}>
-                <XAxis dataKey="day" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="duration" fill="#10B981" />
-              </BarChart>
-            </ResponsiveContainer>
+            <h3 className="mb-1 font-semibold">Sensor Health</h3>
+            <p className="mb-4 text-xs text-gray-500">
+              Each reading is checked against physical limits and the last {HISTORY_SIZE} readings (Z-score).
+            </p>
+            {anomalyError ? (
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Check unavailable: {anomalyError}
+              </p>
+            ) : !anomalyReport ? (
+              <p className="text-sm text-gray-600 dark:text-gray-400">Waiting for the first reading…</p>
+            ) : !anomalyReport.anomalies_detected ? (
+              <div className="flex items-center gap-3 text-green-700 dark:text-green-400">
+                <ShieldCheck className="w-8 h-8" />
+                <p>All sensor readings look normal.</p>
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {anomalyReport.anomalies.map((a) => (
+                  <li
+                    key={a.sensor}
+                    className={`flex items-start gap-2 rounded-lg p-3 text-sm ${
+                      a.severity === "high"
+                        ? "bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-300"
+                        : "bg-yellow-50 text-yellow-900 dark:bg-yellow-900/20 dark:text-yellow-200"
+                    }`}
+                  >
+                    <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span>
+                      <strong className="capitalize">{a.sensor}</strong> = {a.value}: {a.reason}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
         </div>
@@ -382,7 +421,7 @@ const handleConnect = () => {
         alt="ESP32 Stream"
         className="w-full h-[300px] object-cover"
         onError={() => {
-          setError("Camera not reachable 😅");
+          setError("Camera not reachable. Check the IP address and that you are on the same Wi-Fi.");
           setConnected(false);
         }}
       />

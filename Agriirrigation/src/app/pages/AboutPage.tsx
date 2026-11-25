@@ -93,92 +93,71 @@ export function AboutPage() {
           </div>
         </div>
 
-        {/* Our Story */}
+        {/* About this project */}
         <div className="grid lg:grid-cols-2 gap-8 mb-16">
           <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-sm">
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-              Our Story
+              About This Project
             </h2>
             <div className="space-y-4 text-gray-600 dark:text-gray-300">
               <p>
-                Founded in 2020, Agri-Irrigation began with a simple observation: farmers were
-                wasting billions of gallons of water annually due to inefficient irrigation practices.
+                Agri-Irrigation is an open-source student project that connects a low-cost ESP32
+                field controller to a web dashboard, so a farmer can see soil and weather
+                conditions and decide when to irrigate.
               </p>
               <p>
-                Our team of agricultural engineers, data scientists, and IoT specialists came together
-                to create a comprehensive solution that combines real-time soil monitoring, weather
-                prediction, and AI-powered decision making.
-              </p>
-              <p>
-                Today, we serve over 10,000 farms across 25 countries, saving an average of 40%
-                water usage while increasing crop yields by 25%.
+                It has been built and tested with a single field controller. It has not yet been
+                run on working farms, so it makes no claims about water saved or yield gained.
               </p>
             </div>
           </div>
 
           <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-sm">
             <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-              Impact by Numbers
+              What It Does Today
             </h2>
-            <div className="space-y-6">
-              <div className="flex items-center space-x-4">
-                <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center">
-                  <Globe className="w-8 h-8 text-blue-600 dark:text-blue-400" />
-                </div>
-                <div>
-                  <p className="text-3xl font-bold text-gray-900 dark:text-white">10,000+</p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Active Farms</p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-4">
-                <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-xl flex items-center justify-center">
-                  <Droplet className="w-8 h-8 text-green-600 dark:text-green-400" />
-                </div>
-                <div>
-                  <p className="text-3xl font-bold text-gray-900 dark:text-white">40%</p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Water Saved</p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-4">
-                <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/30 rounded-xl flex items-center justify-center">
-                  <Award className="w-8 h-8 text-purple-600 dark:text-purple-400" />
-                </div>
-                <div>
-                  <p className="text-3xl font-bold text-gray-900 dark:text-white">25%</p>
-                  <p className="text-sm text-gray-600 dark:text-gray-400">Yield Increase</p>
-                </div>
-              </div>
-            </div>
+            <ul className="space-y-4 text-gray-600 dark:text-gray-300">
+              <li className="flex items-start space-x-3">
+                <Droplet className="w-6 h-6 text-blue-600 dark:text-blue-400 flex-shrink-0" />
+                <span>Live soil moisture, temperature and humidity from the ESP32, with manual and automatic pump control.</span>
+              </li>
+              <li className="flex items-start space-x-3">
+                <Globe className="w-6 h-6 text-green-600 dark:text-green-400 flex-shrink-0" />
+                <span>Irrigation advice that combines the soil reading with the local rain forecast and crop water demand (ET₀).</span>
+              </li>
+              <li className="flex items-start space-x-3">
+                <Award className="w-6 h-6 text-purple-600 dark:text-purple-400 flex-shrink-0" />
+                <span>Leaf-photo check for 11 common crop diseases, and a farming chatbot that answers in Hinglish.</span>
+              </li>
+            </ul>
           </div>
         </div>
 
         {/* Technology Stack */}
         <div className="bg-white dark:bg-gray-800 rounded-xl p-8 shadow-sm mb-16">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">
-            Powered by Advanced Technology
+            How It Works
           </h2>
           <div className="grid md:grid-cols-3 gap-6">
             <div>
               <h3 className="font-semibold text-gray-900 dark:text-white mb-2">IoT Sensors</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Real-time monitoring of soil moisture, temperature, humidity, and water flow
-                across your entire farm.
+                An ESP32 reads a soil moisture sensor, a DHT22 (temperature and humidity) and an
+                MQ gas sensor, and sends the readings to Firebase Realtime Database.
               </p>
             </div>
             <div>
-              <h3 className="font-semibold text-gray-900 dark:text-white mb-2">AI Analytics</h3>
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Decision Engine</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Machine learning algorithms that predict optimal irrigation schedules based on
-                crop type, weather, and soil conditions.
+                A rule-based engine explains every recommendation. A Z-score check flags faulty
+                sensor readings, and a MobileNetV2 image model classifies leaf photos.
               </p>
             </div>
             <div>
               <h3 className="font-semibold text-gray-900 dark:text-white mb-2">Cloud Platform</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400">
-                Access your farm data anytime, anywhere with our secure cloud-based dashboard
-                and mobile apps.
+                Firebase handles login and live data; a Flask API serves the models; weather comes
+                from Open-Meteo.
               </p>
             </div>
           </div>

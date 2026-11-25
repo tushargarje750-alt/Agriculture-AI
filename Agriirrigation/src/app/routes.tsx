@@ -13,9 +13,11 @@ import { DevicesPage } from "./pages/DevicesPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { EditProfilePage } from "./pages/EditProfilePage";
 import { FarmSettingsPage } from "./pages/FarmSettingsPage";
-import { NavDemoPage } from "./pages/NavDemoPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { MarketplacePage } from "./pages/marketplace";
+import { AboutPage } from "./pages/AboutPage";
+import { DocumentationPage } from "./pages/DocumentationPage";
+import { SupportPage } from "./pages/SupportPage";
 
 export const router = createBrowserRouter([
   {
@@ -35,9 +37,11 @@ export const router = createBrowserRouter([
       { path: "profile", Component: ProfilePage },
       { path: "edit-profile", Component: EditProfilePage },
       { path: "farm-settings", Component: FarmSettingsPage },
-      { path: "nav-demo", Component: NavDemoPage },
-      { path: "*", Component: NotFoundPage },
       { path: "marketplace", Component: MarketplacePage },
+      { path: "about", Component: AboutPage },
+      { path: "docs", Component: DocumentationPage },
+      { path: "support", Component: SupportPage },
+      { path: "*", Component: NotFoundPage },
     ],
   },
 ]);

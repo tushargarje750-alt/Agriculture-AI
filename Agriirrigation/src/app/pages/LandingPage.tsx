@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import { Droplet, Sprout, Sun, Brain, Bug, ArrowRight, Cpu, Cloud, Monitor, Target } from "lucide-react";
-import { ImageWithFallback } from "../components/figma/ImageWithFallback";
+import { ImageWithFallback } from "../components/ImageWithFallback";
+import { REPO_URL } from "../lib/links";
 
 export function LandingPage() {
   const features = [
@@ -184,25 +185,22 @@ export function LandingPage() {
             <div>
               <h4 className="font-semibold mb-4">About</h4>
               <ul className="space-y-2 text-sm text-gray-400">
-                <li><a href="#" className="hover:text-green-500">Our Story</a></li>
-                <li><a href="#" className="hover:text-green-500">Team</a></li>
-                <li><a href="#" className="hover:text-green-500">Careers</a></li>
+                <li><Link to="/about" className="hover:text-green-500">About the project</Link></li>
+                <li><a href={REPO_URL} target="_blank" rel="noreferrer" className="hover:text-green-500">Source code</a></li>
               </ul>
             </div>
             <div>
               <h4 className="font-semibold mb-4">Documentation</h4>
               <ul className="space-y-2 text-sm text-gray-400">
-                <li><a href="#" className="hover:text-green-500">Getting Started</a></li>
-                <li><a href="#" className="hover:text-green-500">API Reference</a></li>
-                <li><a href="#" className="hover:text-green-500">Tutorials</a></li>
+                <li><Link to="/docs" className="hover:text-green-500">Getting Started</Link></li>
+                <li><Link to="/docs" className="hover:text-green-500">API Reference</Link></li>
               </ul>
             </div>
             <div>
               <h4 className="font-semibold mb-4">Support</h4>
               <ul className="space-y-2 text-sm text-gray-400">
-                <li><a href="#" className="hover:text-green-500">Contact Us</a></li>
-                <li><a href="#" className="hover:text-green-500">Help Center</a></li>
-                <li><a href="#" className="hover:text-green-500">Community</a></li>
+                <li><Link to="/support" className="hover:text-green-500">Help</Link></li>
+                <li><a href={`${REPO_URL}/issues`} target="_blank" rel="noreferrer" className="hover:text-green-500">Report an issue</a></li>
               </ul>
             </div>
           </div>

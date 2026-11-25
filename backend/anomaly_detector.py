@@ -5,12 +5,12 @@ Uses two complementary checks:
   1. Hard range validation — physical impossibility (e.g. soil moisture > 100%)
   2. Rolling Z-score — statistical deviation from recent sensor history
 
-A Z-score > 3 (i.e. > 3 standard deviations from the rolling mean) flags
-a reading as anomalous. This catches sensor drift, wiring faults, and
+A Z-score above 2.5 (more than 2.5 standard deviations from the recent mean)
+flags a reading as anomalous. This catches sensor drift, wiring faults, and
 sudden environmental shocks.
 
 Severity scale:
-  low    — Z < 2.5  (monitor)
+  none   — Z ≤ 2.5  (normal)
   medium — Z 2.5–4  (investigate)
   high   — Z > 4 or out-of-range (alert immediately)
 """
@@ -23,6 +23,16 @@ VALID_RANGES: dict[str, tuple[float, float]] = {
     "temp":     (-10.0, 60.0),
     "humidity": (0.0,  100.0),
     "gas":      (0.0, 5000.0),
+}
+
+# Smallest spread assumed for each sensor. Without it, a sensor that has sent
+# the same value for a while (std = 0) would flag a 1-unit change as a huge
+# outlier. Roughly the sensor's normal jitter.
+MIN_STD: dict[str, float] = {
+    "soil":     1.0,   # %
+    "temp":     0.5,   # °C
+    "humidity": 1.0,   # %
+    "gas":      10.0,  # raw ADC units
 }
 
 Z_LOW    = 2.5
@@ -73,13 +83,16 @@ def detect(
 
         # ── Rolling Z-score check ───────────────────────────────────────────
         if history and len(history) >= 3:
-            past = [float(h[sensor]) for h in history if sensor in h]
+            past = [
+                float(h[sensor]) for h in history
+                if isinstance(h, dict) and h.get(sensor) is not None
+            ]
             if len(past) >= 3:
                 mean = sum(past) / len(past)
                 variance = sum((v - mean) ** 2 for v in past) / len(past)
-                std = variance ** 0.5
+                std = max(variance ** 0.5, MIN_STD[sensor])
 
-                z = abs(float(val) - mean) / (std + 1e-9)
+                z = abs(float(val) - mean) / std
                 scores[sensor] = round(min(z / Z_MEDIUM, 1.0), 3)
 
                 if z > Z_LOW:

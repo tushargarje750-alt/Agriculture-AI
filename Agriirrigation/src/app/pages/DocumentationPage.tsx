@@ -1,6 +1,7 @@
 import { Book, Code, Cpu, FileText, HelpCircle, Lightbulb, PlayCircle, Search, Settings, Zap } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
+import { REPO_URL } from "../lib/links";
 
 export function DocumentationPage() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -19,144 +20,134 @@ export function DocumentationPage() {
     "getting-started": [
       {
         title: "Quick Start Guide",
-        description: "Get up and running with Agri-Irrigation in 5 minutes",
+        description: "Get up and running with Agri-Irrigation",
         content: [
           "1. Create your account and complete profile setup",
-          "2. Add your farm details and configure zones",
-          "3. Connect IoT sensors to your account",
-          "4. Set up irrigation schedules",
-          "5. Monitor your dashboard and start optimizing water usage"
+          "2. Add your farm details, including the nearest village or town, in Farm Setup",
+          "3. Power on the ESP32 controller so it starts sending readings to Firebase",
+          "4. Open the Dashboard to see live soil, temperature and humidity readings",
+          "5. Use the Irrigation page for recommendations and pump control"
         ]
       },
       {
         title: "System Requirements",
-        description: "Hardware and software requirements for optimal performance",
+        description: "What you need to run the system",
         content: [
-          "• Minimum 3G/4G internet connection for IoT devices",
+          "• ESP32 board with Wi-Fi access",
+          "• Soil moisture sensor, DHT22 temperature/humidity sensor, MQ gas sensor",
+          "• Pump or valve switched by a relay on the ESP32",
           "• Modern web browser (Chrome, Firefox, Safari, Edge)",
-          "• Compatible soil moisture sensors (see device list)",
-          "• Irrigation system with electronic valves",
-          "• Power supply for IoT sensors (solar or battery powered)"
+          "• The Flask backend running for recommendations, disease detection and chat"
         ]
       },
       {
         title: "Platform Overview",
-        description: "Understanding the Agri-Irrigation ecosystem",
+        description: "Understanding the Agri-Irrigation pages",
         content: [
-          "Dashboard: Real-time monitoring and analytics",
-          "Irrigation Control: Manual and automated water management",
-          "Weather Integration: Forecast-based irrigation scheduling",
-          "AI Assistant: Smart recommendations and plant disease detection",
-          "Device Management: IoT sensor configuration and monitoring"
+          "Dashboard: live sensor readings, trends and a sensor-health check",
+          "Irrigation: recommendation plus manual, stop and auto pump control",
+          "Weather: 7-day Open-Meteo forecast for your farm, including ET₀",
+          "AI Assistant: leaf-photo disease check and a Hinglish farming chatbot",
+          "Devices: example device list (registration is not connected yet)"
         ]
       }
     ],
     "setup": [
       {
         title: "Farm Configuration",
-        description: "Setting up your farm zones and parameters",
+        description: "Setting up your farm details",
         content: [
-          "1. Navigate to Farm Settings",
-          "2. Define farm boundaries using the interactive map",
-          "3. Create irrigation zones based on crop types",
-          "4. Set soil type and crop parameters for each zone",
-          "5. Configure optimal moisture levels (typically 40-60%)"
+          "1. Open Farm Settings",
+          "2. Enter farm name, size, primary crop and soil type",
+          "3. Enter your village or town as the farm location",
+          "4. Save; the Weather and Irrigation pages use this location for the forecast"
         ]
       },
       {
-        title: "Irrigation Schedule Setup",
-        description: "Creating automated irrigation schedules",
+        title: "How Recommendations Work",
+        description: "What the irrigation engine looks at",
         content: [
-          "• Go to Irrigation page > Schedule tab",
-          "• Select time-based or sensor-based triggers",
-          "• Set moisture thresholds for automatic irrigation",
-          "• Configure duration and water flow rates",
-          "• Enable AI recommendations for optimal timing"
+          "• Soil moisture is the main signal: below 20% critical, below 35% dry, below 45% mild deficit",
+          "• ET₀ (crop water demand) from the forecast: 6 mm/day or more makes it irrigate sooner",
+          "• Rain forecast: 5 mm or more in the next 24 h skips or shortens irrigation",
+          "• Temperature and time of day: avoids irrigating in the 11 AM–4 PM heat",
+          "• Every recommendation lists the reasons and the inputs it used"
         ]
       },
       {
         title: "Weather Integration",
-        description: "Connecting to weather services",
+        description: "Where the forecast comes from",
         content: [
-          "The system automatically integrates local weather data.",
-          "Irrigation schedules adjust based on rainfall predictions.",
-          "You can set rain delay thresholds in settings.",
-          "Weather alerts notify you of extreme conditions.",
-          "7-day forecasts help plan irrigation cycles."
+          "Forecasts come from Open-Meteo (free, no API key needed).",
+          "Your farm location is turned into coordinates with Open-Meteo's geocoding.",
+          "If the town is not found, try the nearest larger town name.",
+          "Without a location, recommendations use sensor data only."
         ]
       }
     ],
     "devices": [
       {
-        title: "Connecting IoT Sensors",
-        description: "How to add and configure sensors",
+        title: "Connecting the ESP32",
+        description: "How the controller talks to the app",
         content: [
-          "1. Go to Devices page and click 'Add Device'",
-          "2. Scan the QR code on your sensor using mobile app",
-          "3. Or manually enter the device ID from sensor label",
-          "4. Assign the sensor to a specific farm zone",
-          "5. Set sensor depth and calibration values",
-          "6. Test connection and verify data streaming"
+          "1. The ESP32 writes readings to devices/ESP32_001/data in Firebase Realtime Database",
+          "2. Fields used: soil, temp, humidity, gas, pump, autoMode (optional: battery, N, P, K)",
+          "3. The app writes pump commands to devices/ESP32_001/commands",
+          "4. commands/irrigation is ON, OFF or NONE; commands/autoMode is true or false"
         ]
       },
       {
-        title: "Supported Devices",
-        description: "Compatible IoT sensors and hardware",
+        title: "Supported Sensors",
+        description: "Hardware used in this project",
         content: [
-          "• Soil Moisture Sensors (capacitive, resistive)",
-          "• Temperature & Humidity Sensors (DHT22, DHT11)",
-          "• Water Flow Meters (hall effect, ultrasonic)",
-          "• Solenoid Valves (12V DC, 24V AC)",
-          "• Weather Stations (rainfall, wind, solar radiation)",
-          "• pH and NPK Sensors (optional)"
+          "• Capacitive or resistive soil moisture sensor",
+          "• DHT22 temperature and humidity sensor",
+          "• MQ-series gas sensor",
+          "• ESP32-CAM for an optional live camera view on the Dashboard"
         ]
       },
       {
         title: "Device Troubleshooting",
         description: "Common device issues and solutions",
         content: [
-          "Sensor Not Connecting: Check power supply and WiFi signal",
-          "Incorrect Readings: Recalibrate sensor in settings",
+          "Sensor Not Connecting: Check power supply and Wi-Fi signal",
+          "Readings Flagged on the Dashboard: Check wiring; the Sensor Health card shows which value looks wrong",
           "Offline Status: Verify internet connectivity",
-          "Battery Low: Replace batteries or solar panel",
-          "Data Delays: Check Firebase Realtime Database connection"
+          "Data Delays: Check the Firebase Realtime Database connection"
         ]
       }
     ],
     "api": [
       {
-        title: "REST API Overview",
-        description: "Accessing Agri-Irrigation data programmatically",
+        title: "Backend API Overview",
+        description: "The Flask backend used by this app",
         content: [
-          "Base URL: https://api.agri-irrigation.com/v1",
-          "Authentication: Bearer token (JWT)",
-          "Rate Limits: 1000 requests/hour",
-          "Response Format: JSON",
-          "Webhooks: Available for real-time events"
+          "Base URL: http://localhost:5000 by default (set VITE_API_BASE for another address)",
+          "Authentication: Firebase ID token as 'Authorization: Bearer <token>' when the backend has a service account configured",
+          "Format: JSON, except /predict which takes a multipart image upload"
         ]
       },
       {
         title: "API Endpoints",
-        description: "Available endpoints for integration",
+        description: "Endpoints the app calls",
         content: [
-          "GET /farms - List all farms",
-          "GET /farms/{id}/sensors - Get sensor data",
-          "POST /irrigation/start - Start irrigation",
-          "POST /irrigation/stop - Stop irrigation",
-          "GET /weather/{location} - Get weather forecast",
-          "POST /devices - Register new device"
+          "GET /health - What is configured (model, chatbot, auth)",
+          "GET /model/info - Disease model details and recorded accuracy",
+          "POST /predict - Leaf photo (form field 'image') → disease, confidence, advice",
+          "POST /chat - { message } → farming answer in Hinglish",
+          "POST /irrigation/recommend - { soil, temp, humidity, hour?, et0_mm?, rain_mm_24h? }",
+          "POST /anomaly/detect - { reading, history } → faulty-reading report"
         ]
       },
       {
         title: "Sample Code",
-        description: "Example API integration",
+        description: "Example request",
         content: [
-          "// Get sensor data",
-          "fetch('https://api.agri-irrigation.com/v1/farms/123/sensors', {",
-          "  headers: { 'Authorization': 'Bearer YOUR_TOKEN' }",
-          "})",
-          ".then(res => res.json())",
-          ".then(data => console.log(data));"
+          "fetch('http://localhost:5000/irrigation/recommend', {",
+          "  method: 'POST',",
+          "  headers: { 'Content-Type': 'application/json' },",
+          "  body: JSON.stringify({ soil: 32, temp: 31, humidity: 55, hour: 7 })",
+          "}).then(res => res.json()).then(console.log);"
         ]
       }
     ],
@@ -166,10 +157,10 @@ export function DocumentationPage() {
         description: "Solutions to frequently encountered problems",
         content: [
           "Dashboard Not Loading: Clear browser cache and cookies",
-          "Sensors Not Updating: Check device battery and connection",
-          "Irrigation Not Starting: Verify valve power and wiring",
-          "Incorrect Moisture Readings: Recalibrate sensors",
-          "Mobile App Sync Issues: Update to latest app version"
+          "Sensors Not Updating: Check the ESP32's power and Wi-Fi connection",
+          "Irrigation Not Starting: Verify pump/relay power and wiring",
+          "Incorrect Moisture Readings: Recalibrate the soil sensor for your soil",
+          "'Could not reach the backend': Start the Flask backend (python app.py)"
         ]
       },
       {
@@ -178,9 +169,8 @@ export function DocumentationPage() {
         content: [
           "1. Verify internet connection on all devices",
           "2. Check Firebase Realtime Database status",
-          "3. Ensure sensors are within WiFi range",
-          "4. Restart router and IoT devices",
-          "5. Contact support if issues persist"
+          "3. Ensure sensors are within Wi-Fi range",
+          "4. Restart router and IoT devices"
         ]
       }
     ],
@@ -190,9 +180,9 @@ export function DocumentationPage() {
         description: "Best practices for efficient irrigation",
         content: [
           "• Irrigate early morning or late evening to reduce evaporation",
-          "• Use drip irrigation for 30% more water efficiency",
-          "• Monitor soil moisture instead of time-based schedules",
-          "• Adjust for rainfall and seasonal changes",
+          "• Drip irrigation usually needs much less water than flood irrigation",
+          "• Irrigate by soil moisture, not by a fixed timetable",
+          "• Skip irrigation when good rain is forecast",
           "• Maintain sensors for accurate readings"
         ]
       },
@@ -200,10 +190,10 @@ export function DocumentationPage() {
         title: "Sensor Placement",
         description: "Where to place sensors for accurate data",
         content: [
-          "Place sensors in crop root zone (6-12 inches deep)",
-          "Install multiple sensors for large farms (1 per acre recommended)",
+          "Place soil sensors in the crop root zone (about 15–30 cm deep)",
+          "Use more than one sensor on large or uneven fields",
           "Avoid areas with unusual drainage or water pooling",
-          "Position temperature sensors in shade",
+          "Keep temperature sensors in the shade",
           "Protect sensors from direct sun and physical damage"
         ]
       },
@@ -211,10 +201,9 @@ export function DocumentationPage() {
         title: "Maintenance Schedule",
         description: "Regular maintenance for optimal performance",
         content: [
-          "Weekly: Check sensor batteries and connections",
+          "Weekly: Check sensor power and connections",
           "Monthly: Clean sensors and verify calibration",
-          "Quarterly: Inspect valves and irrigation lines",
-          "Annually: Replace sensor batteries and update firmware",
+          "Every season: Inspect pump, valves and irrigation lines",
           "After storms: Check for physical damage"
         ]
       }
@@ -326,21 +315,21 @@ export function DocumentationPage() {
                 <span>Quick Links</span>
               </h3>
               <div className="grid sm:grid-cols-2 gap-3">
-                <Link to="/devices" className="bg-white/20 hover:bg-white/30 rounded-lg p-3 transition-colors">
-                  <p className="font-medium">Add Your First Device</p>
-                  <p className="text-xs opacity-90">Connect IoT sensors</p>
+                <Link to="/farm-settings" className="bg-white/20 hover:bg-white/30 rounded-lg p-3 transition-colors">
+                  <p className="font-medium">Set Your Farm Location</p>
+                  <p className="text-xs opacity-90">Needed for the weather forecast</p>
                 </Link>
                 <Link to="/irrigation" className="bg-white/20 hover:bg-white/30 rounded-lg p-3 transition-colors">
-                  <p className="font-medium">Setup Irrigation</p>
-                  <p className="text-xs opacity-90">Configure schedules</p>
+                  <p className="font-medium">Irrigation</p>
+                  <p className="text-xs opacity-90">Recommendation and pump control</p>
                 </Link>
                 <Link to="/support" className="bg-white/20 hover:bg-white/30 rounded-lg p-3 transition-colors">
-                  <p className="font-medium">Contact Support</p>
-                  <p className="text-xs opacity-90">Get help from experts</p>
+                  <p className="font-medium">Get Help</p>
+                  <p className="text-xs opacity-90">Chatbot, docs and GitHub issues</p>
                 </Link>
-                <a href="#" className="bg-white/20 hover:bg-white/30 rounded-lg p-3 transition-colors">
-                  <p className="font-medium">Video Tutorials</p>
-                  <p className="text-xs opacity-90">Watch and learn</p>
+                <a href={`${REPO_URL}#readme`} target="_blank" rel="noreferrer" className="bg-white/20 hover:bg-white/30 rounded-lg p-3 transition-colors">
+                  <p className="font-medium">Project README</p>
+                  <p className="text-xs opacity-90">Setup and architecture</p>
                 </a>
               </div>
             </div>
